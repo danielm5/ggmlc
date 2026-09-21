@@ -105,16 +105,47 @@ Same idea as Python `laya.Router`: decide the checkpoint **before** the forward.
 {"id":"3","state":{"message":"..."},"questions":{"intent":{"type":"choice","instructions":"...","criteria":{"refund":"..."}}}}
 ```
 
-### Web Studio (`serve`)
+### Web Studio + TypeSafe API (`serve`)
+
+`laya serve` is a TypeSafe-compatible System One server. The official [`typesafe-sdk`](https://github.com/typesafe-ai/typesafe-sdk-python) talks to it unchanged — set `base_url` at the local port. The Decision Studio uses the same routes.
 
 ```bash
 laya serve scratch\laya_english_f16.gguf --port 8080 --device auto --cuda-graph
 ```
 
-- `GET /` — Decision Studio: presets, **question builder** (add choice/score/noul + options), raw JSON tab, **Copy Jev schema**
-- `GET /api/health`
-- `GET /api/presets`
-- `POST /api/decide` with `{"state":..., "questions":...}` or `{"preset":"email"}`
+| Method | Path | Role |
+| :--- | :--- | :--- |
+| `GET` | `/` | Decision Studio: presets, question builder, **Copy Jev schema** |
+| `GET` | `/health` | Liveness (`status`, `device`, `families`) |
+| `GET` | `/v1/models` | TypeSafe model list (`name`, `description`, `release_date`) |
+| `GET` | `/v1/presets` | Studio helper: built-in workflows |
+| `POST` | `/v1/systemone` | TypeSafe System One ([OpenAPI](https://api.typesafe.ai/openapi.json)) |
+| `POST` | `/v1/decide` | Same body/response as `/v1/systemone` |
+| `POST` | `/v1/decide/batch` | `{states, questions}` — up to 256 states, shared questions |
+
+Request body matches TypeSafe: `{ "state": ..., "model": "jev-latest", "questions": { "<id>": { "type": "choice"|"score"|"noul", "instructions": "...", "criteria": ... } } }`.
+
+Response matches TypeSafe: `{ "model", "answers", "usage": { "input_tokens", "output_tokens" } }`. Extra Laya fields (`family`, `route`, `usage.latency_ms`, `action`) are ignored by the SDK.
+
+Auth is off by default. Set `LAYA_API_KEY` or `TYPESAFE_API_KEY` to require `Authorization: Bearer <key>` on `/v1/*` POSTs and `GET /v1/models`.
+
+```python
+from typesafe_sdk import Choice, Noul, TypeSafeClient
+
+with TypeSafeClient(api_key="local", base_url="http://127.0.0.1:8080") as client:
+    result = client.system_one(
+        state={"document": "I was charged twice. Please fix this ASAP."},
+        questions={
+            "billing": Noul(instructions="Is this about billing?"),
+            "tone": Choice(
+                instructions="What is the tone?",
+                criteria={"calm": None, "angry": None},
+            ),
+        },
+        model="jev-latest",
+    )
+    print(result.nouls["billing"].noul, result.choices["tone"].choice)
+```
 
 ---
 
@@ -160,6 +191,14 @@ laya bench scratch\laya_english_f16.gguf --preset email --device auto --cuda-gra
 
 ```bash
 pytest tests/numerical/test_laya_differential.py tests/numerical/test_laya_family.py tests/numerical/test_laya_mini_benchmarks.py -v
+```
+
+TypeSafe SDK smoke (server must already be listening):
+
+```powershell
+.\build-win-cuda\examples\laya\laya.exe serve scratch\laya_english_f16.gguf --port 18080 --device auto --cuda-graph
+uv pip install typesafe-sdk
+.venv\Scripts\python.exe scratch\test_laya_typesafe_sdk.py --base-url http://127.0.0.1:18080
 ```
 
 - Differential: live `laya.Agent` vs `LayaCleanTrunk` vs `scratch/laya_english_f16.gguf` (and other GGUFs when present).

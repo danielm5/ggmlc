@@ -66,6 +66,10 @@ Question question_from_json(const std::string& id, const JsonValue& qdef);
 std::vector<Question> questions_from_json(const JsonValue& obj);
 JsonValue questions_to_json(const std::vector<Question>& qs);
 
+// TypeSafe / OpenAPI discriminator checks. Empty string = valid.
+// `param` is filled with the dotted field path on failure (e.g. questions.tone.criteria).
+std::string validate_questions_json(const JsonValue& obj, std::string* param = nullptr);
+
 std::string format_answer_json(const DecideResult& result, bool pretty = true);
 std::string format_answer_cli(const DecideResult& result);
 

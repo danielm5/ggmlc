@@ -89,6 +89,37 @@ std::vector<Question> questions_from_json(const JsonValue& obj) {
     return out;
 }
 
+std::string validate_questions_json(const JsonValue& obj, std::string* param) {
+    auto fail = [&](const std::string& path, const std::string& msg) {
+        if (param) *param = path;
+        return msg;
+    };
+    if (!obj.is_object()) return fail("questions", "questions must be an object keyed by question name");
+    if (obj.obj.empty()) return fail("questions", "at least one question is required");
+    for (const auto& kv : obj.obj) {
+        const std::string base = "questions." + kv.first;
+        if (!kv.second.is_object()) return fail(base, "each question must be an object");
+        const JsonValue* t = kv.second.get("type");
+        if (!t || !t->is_string() || t->s.empty()) {
+            return fail(base + ".type", "question type is required (choice, score, or noul)");
+        }
+        if (t->s != "choice" && t->s != "score" && t->s != "noul") {
+            return fail(base + ".type", "question type must be choice, score, or noul");
+        }
+        const JsonValue* crit = kv.second.get("criteria");
+        if (t->s == "choice") {
+            if (!crit || !crit->is_object() || crit->obj.empty()) {
+                return fail(base + ".criteria", "choice questions require nonempty criteria");
+            }
+        } else if (t->s == "score") {
+            if (!crit || !crit->is_array() || crit->arr.empty()) {
+                return fail(base + ".criteria", "score questions require a nonempty criteria list");
+            }
+        }
+    }
+    return "";
+}
+
 JsonValue questions_to_json(const std::vector<Question>& qs) {
     JsonValue o = JsonValue::object();
     for (const auto& q : qs) {

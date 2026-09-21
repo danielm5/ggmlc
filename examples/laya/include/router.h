@@ -28,8 +28,10 @@ public:
     std::string device() const;
 
     DecisionEngine& engine();
-    DecisionEngine& pick(const JsonValue& state, const std::vector<Question>& questions);
-    DecideResult decide(const JsonValue& state, const std::vector<Question>& questions);
+    DecisionEngine& pick(const JsonValue& state, const std::vector<Question>& questions,
+                         const std::string& model = "");
+    DecideResult decide(const JsonValue& state, const std::vector<Question>& questions,
+                        const std::string& model = "");
 
     RouteInfo last_route() const { return last_; }
     LangGuess detect(const JsonValue& state) const { return guess_language(state); }
@@ -46,7 +48,8 @@ private:
 
     bool consider_gguf(const std::string& path);
     DecisionEngine& ensure(const std::string& family);
-    std::string choose_family(const JsonValue& state, const std::vector<Question>& questions) const;
+    std::string choose_family(const JsonValue& state, const std::vector<Question>& questions,
+                              const std::string& model = "") const;
 };
 
 }  // namespace laya

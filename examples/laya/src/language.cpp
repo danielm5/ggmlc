@@ -211,6 +211,35 @@ static std::string lower_copy(std::string s) {
     return s;
 }
 
+ModelRef resolve_model_name(const std::string& model) {
+    ModelRef out;
+    std::string s = lower_copy(model);
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+    size_t i = 0;
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
+    s = s.substr(i);
+    if (s.empty() || s == "auto") return out;
+    out.auto_route = false;
+    if (s == "english" || s == "en" || s == "laya" || s == "laya-english" || s == "jev" ||
+        s == "jev-latest" || s == "convaiinnovations/laya") {
+        out.family = "english";
+        return out;
+    }
+    if (s == "multilingual" || s == "multi" || s == "ml" || s == "laya-multilingual" ||
+        s == "convaiinnovations/laya-multilingual") {
+        out.family = "multilingual";
+        return out;
+    }
+    if (s == "typed-decisions" || s == "typed" || s == "typed_decisions" ||
+        s == "laya-typed-decisions" || s == "convaiinnovations/laya-typed-decisions") {
+        out.family = "typed-decisions";
+        return out;
+    }
+    out.unknown = true;
+    out.family = s;
+    return out;
+}
+
 std::string infer_family(const std::string& path, const std::string& model_name, const std::string& checkpoint) {
     const std::string blob = lower_copy(path + " " + model_name + " " + checkpoint);
     if (blob.find("typed") != std::string::npos) return "typed-decisions";
