@@ -67,7 +67,7 @@ button{border:0;border-radius:10px;padding:10px 16px;cursor:pointer;font-weight:
 <header>
   <div>
     <h1><span>Laya</span> System 1 Decision Studio</h1>
-    <p class="sub">Typed decisions in one pass — build questions as a form, or paste a Jev/Laya schema.</p>
+    <p class="sub">Typed decisions in one pass — TypeSafe <code>POST /v1/systemone</code>. Build questions as a form, or paste a Jev/Laya schema.</p>
   </div>
   <div class="status" id="health">connecting…</div>
 </header>
@@ -109,16 +109,22 @@ let PRESETS = [];
 let current = null;
 let mode = 'form';
 let questionsForm = [];
+let MODEL_NAME = 'laya';
 
 function uid(){ return 'q' + Math.random().toString(36).slice(2,7); }
 
 async function boot(){
   try {
-    const h = await fetch('/api/health').then(r=>r.json());
+    const h = await fetch('/health').then(r=>r.json());
+    MODEL_NAME = h.model || 'laya';
+    try {
+      const md = await fetch('/v1/models').then(r=>r.json());
+      if (md.models && md.models.length) MODEL_NAME = md.models[0].name;
+    } catch(e) {}
     const fam = h.families ? h.families.join(', ') : (h.family||'');
     document.getElementById('health').textContent =
       (h.model||'laya') + (fam? ' · '+fam : '') + ' · ' + (h.device||'') + ' · ready';
-    PRESETS = await fetch('/api/presets').then(r=>r.json());
+    PRESETS = await fetch('/v1/presets').then(r=>r.json());
     const chips = document.getElementById('chips');
     PRESETS.forEach((p,i)=>{
       const b = document.createElement('button');
@@ -310,14 +316,19 @@ document.getElementById('go').onclick = async ()=>{
   if (mode==='form') syncJson();
   const body = {
     state: parseMaybe(document.getElementById('state').value),
-    questions: parseMaybe(document.getElementById('questions').value)
+    questions: parseMaybe(document.getElementById('questions').value),
+    model: MODEL_NAME
   };
   const out = document.getElementById('out');
   out.innerHTML = '<p class="meta">scoring…</p>';
   try {
-    const res = await fetch('/api/decide', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const res = await fetch('/v1/systemone', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
     const js = await res.json();
-    if (js.error) { out.innerHTML = '<p class="meta">'+js.error+'</p>'; return; }
+    if (!res.ok || js.error) {
+      const msg = (js.error && js.error.message) ? js.error.message : (typeof js.error==='string' ? js.error : res.statusText);
+      out.innerHTML = '<p class="meta">'+msg+'</p>';
+      return;
+    }
     render(js);
   } catch(e) {
     out.innerHTML = '<p class="meta">request failed</p>';

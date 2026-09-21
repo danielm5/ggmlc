@@ -527,7 +527,7 @@ pytest -v
 
 1. **[Laya System 1 Decision Engine (`examples/laya`)](examples/laya/README.md)**:
    - Local open-weight reproduction of Jev-style **System 1** decisions: typed `choice` / `score` / `noul` questions scored in one parallel pass. English ModernBERT-large 421M, plus mmBERT multilingual and the typed-decisions specialist.
-   - Domain pipeline in C++: Laya `build_sequence`, temperatures, Shannon confidence, `--device auto`, language routing (`--models-dir`), stdin JSON-RPC (`daemon`), and an embedded Decision Studio with a question-builder form + `POST /api/decide` (`serve`).
+   - Domain pipeline in C++: Laya `build_sequence`, temperatures, Shannon confidence, `--device auto`, language routing (`--models-dir`), stdin JSON-RPC (`daemon`), and an embedded Decision Studio plus TypeSafe-compatible `POST /v1/systemone` (`serve`).
    - GGUFs: [mys/laya-GGUF](https://huggingface.co/mys/laya-GGUF) · [mys/laya-multilingual-GGUF](https://huggingface.co/mys/laya-multilingual-GGUF) · [mys/laya-typed-decisions-GGUF](https://huggingface.co/mys/laya-typed-decisions-GGUF). Binaries: [GitHub `latest` release](https://github.com/monatis/ggmlc/releases/latest) (macOS Metal, Linux/Windows CUDA sm80/sm86/sm89).
    - RTX 4050 Laptop: **~25 ms** / decision (`laya.exe` CUDA, pad-to-live S=84) and **~143 ms** for a 7-question email preset (one `B=7, S=124` forward). Official PyTorch Agent is 57 ms / 143 ms. No autoregressive tokens.
 2. **[Tab Completion Engine (`examples/tab_completion`)](examples/tab_completion/README.md)**:

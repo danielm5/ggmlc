@@ -131,7 +131,14 @@ DecisionEngine& DecisionRouter::engine() {
     return ensure(paths_.begin()->first);
 }
 
-std::string DecisionRouter::choose_family(const JsonValue& state, const std::vector<Question>& questions) const {
+std::string DecisionRouter::choose_family(const JsonValue& state, const std::vector<Question>& questions,
+                                          const std::string& model) const {
+    ModelRef ref = resolve_model_name(model);
+    if (ref.unknown) {
+        throw std::runtime_error("unknown model '" + model + "'");
+    }
+    if (!ref.auto_route) return ref.family;
+
     std::string want = forced_family_;
     for (char& c : want) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (want == "en") want = "english";
@@ -156,19 +163,22 @@ std::string DecisionRouter::choose_family(const JsonValue& state, const std::vec
     return paths_.begin()->first;
 }
 
-DecisionEngine& DecisionRouter::pick(const JsonValue& state, const std::vector<Question>& questions) {
-    const std::string fam = choose_family(state, questions);
+DecisionEngine& DecisionRouter::pick(const JsonValue& state, const std::vector<Question>& questions,
+                                     const std::string& model) {
+    const std::string fam = choose_family(state, questions, model);
     LangGuess g = guess_language(state);
     last_.family = fam;
     last_.path = paths_.count(fam) ? paths_.at(fam) : "";
-    last_.reason = (forced_family_ != "auto" && !forced_family_.empty())
-                       ? ("forced " + fam)
-                       : g.reason;
+    ModelRef ref = resolve_model_name(model);
+    if (!ref.auto_route) last_.reason = "model " + fam;
+    else if (forced_family_ != "auto" && !forced_family_.empty()) last_.reason = "forced " + fam;
+    else last_.reason = g.reason;
     return ensure(fam);
 }
 
-DecideResult DecisionRouter::decide(const JsonValue& state, const std::vector<Question>& questions) {
-    DecisionEngine& eng = pick(state, questions);
+DecideResult DecisionRouter::decide(const JsonValue& state, const std::vector<Question>& questions,
+                                    const std::string& model) {
+    DecisionEngine& eng = pick(state, questions, model);
     DecideResult r = eng.decide(state, questions);
     r.route_family = last_.family;
     r.route_reason = last_.reason;
@@ -202,6 +212,11 @@ JsonValue DecisionRouter::health_json() const {
     for (const auto& f : discovered_families()) fams.arr.push_back(JsonValue::string(f));
     o.set("families", fams);
     o.set("family", JsonValue::string(forced_family_));
+    std::string model = "laya";
+    if (!engines_.empty()) model = engines_.begin()->second->model_name();
+    else if (!last_.family.empty()) model = last_.family;
+    else if (!paths_.empty()) model = paths_.begin()->first;
+    o.set("model", JsonValue::string(model));
     if (!last_.family.empty()) {
         o.set("last_route", JsonValue::string(last_.family));
         o.set("last_reason", JsonValue::string(last_.reason));

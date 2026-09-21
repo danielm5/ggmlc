@@ -26,6 +26,14 @@ std::string infer_family(const std::string& path,
                          const std::string& model_name = "",
                          const std::string& checkpoint = "");
 
+// TypeSafe `model` field → Laya family. Empty `model` / "auto" → auto_route.
+struct ModelRef {
+    bool auto_route = true;
+    bool unknown = false;
+    std::string family;
+};
+ModelRef resolve_model_name(const std::string& model);
+
 int quant_rank(const std::string& path);
 
 }  // namespace laya
