@@ -29,6 +29,8 @@ Pre-compiled GGUFs (F16, Q8_0, UD_Q4_K_M) are published under:
 - English: [mys/laya-GGUF](https://huggingface.co/mys/laya-GGUF)
 - Multilingual: [mys/laya-multilingual-GGUF](https://huggingface.co/mys/laya-multilingual-GGUF)
 - Typed-decisions: [mys/laya-typed-decisions-GGUF](https://huggingface.co/mys/laya-typed-decisions-GGUF)
+- Kev 0.5B (Qwen2.5): [mys/kev-0.5b-GGUF](https://huggingface.co/mys/kev-0.5b-GGUF)
+- Kev 0.8B (Qwen3.5 Gated DeltaNet): [mys/kev-0.8b-GGUF](https://huggingface.co/mys/kev-0.8b-GGUF)
 
 ```powershell
 # huggingface-cli download mys/laya-GGUF laya_english_f16.gguf --local-dir scratch
