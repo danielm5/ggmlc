@@ -163,8 +163,7 @@ class DecisionPipelineSpec:
             _tok(sep_id),
         ]
         template = (
-            "[CLS] {qtype} question: {instructions} [SEP] "
-            "([MASK] {option})* [SEP] {state} [SEP]"
+            "[CLS] {qtype} question: {instructions} [SEP] ([MASK] {option})* [SEP] {state} [SEP]"
         )
         return cls(
             kind="laya",

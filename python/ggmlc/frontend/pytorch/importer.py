@@ -1004,11 +1004,7 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                 if ic_val > 1 and w_ic_val == 1:
                     groups = int(ic_val)
             # nn.Conv1d exports as aten.convolution.default (no "conv1d" in the target).
-            is_1d = (
-                "conv1d" in target_str
-                or len(in_t.shape.dims) == 3
-                or len(w_t.shape.dims) == 3
-            )
+            is_1d = "conv1d" in target_str or len(in_t.shape.dims) == 3 or len(w_t.shape.dims) == 3
             if is_1d:
                 attributes["stride_w"] = (
                     int(stride[0]) if isinstance(stride, (list, tuple)) else int(stride)

@@ -8,9 +8,7 @@ from torch import nn
 class TinyCausalDWConv1d(nn.Module):
     def __init__(self, channels: int = 8, k: int = 4):
         super().__init__()
-        self.conv = nn.Conv1d(
-            channels, channels, k, groups=channels, padding=k - 1, bias=False
-        )
+        self.conv = nn.Conv1d(channels, channels, k, groups=channels, padding=k - 1, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         s = x.shape[-1]
