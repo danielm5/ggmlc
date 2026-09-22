@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include "questions.h"
 #include "sequence.h"
+#include "recipe.h"
 #include "ggmlc/loader.h"
 #include "ggmlc/executor.h"
 #include "ggmlc/pipeline/tokenizer.h"
@@ -30,6 +31,7 @@ public:
     const std::string& family() const { return family_; }
     const std::string& model_name() const { return model_name_; }
     const SequenceConfig& seq_config() const { return seq_; }
+    const DecisionRecipe& recipe() const { return recipe_; }
     const ggmlc::SerializedModelGraph& graph() const { return graph_; }
     const ggmlc::pipeline::BPETokenizer& tokenizer() const { return tokenizer_; }
 
@@ -48,20 +50,22 @@ private:
     int n_threads_ = 4;
     bool cuda_graph_ = false;
 
+    DecisionRecipe recipe_;
     SequenceConfig seq_;
     std::vector<int> length_buckets_ = {64, 128, 256, 512};
     int min_seq_ = 64;
     int max_batch_ = 8;
     bool dynamic_ = false;
-    std::vector<float> temperature_ = {1.6369f, 1.25143f, 1.9834f};
-    std::unordered_map<std::string, float> temperature_by_options_;
 
     ggmlc::SerializedModelGraph graph_;
     std::unique_ptr<ggmlc::ModelExecutor> executor_;
     ggmlc::pipeline::BPETokenizer tokenizer_;
 
-    uint32_t in_ids_ = 0, in_att_ = 0, in_mpos_ = 0, in_mmask_ = 0, in_qtype_ = 0;
+    uint32_t in_ids_ = 0, in_att_ = 0, in_mpos_ = 0, in_mmask_ = 0, in_qtype_ = 0, in_decide_ = 0;
     uint32_t out_logits_ = 0, out_act_ = 0;
+    bool has_qtype_ = true;
+    bool has_decide_ = false;
+    bool has_act_ = true;
 
     int length_bucket(int n) const;
     int clamp_seq(int n) const;
@@ -76,6 +80,7 @@ private:
         const std::vector<int32_t>& mpos,
         const std::vector<float>& mmask,
         const std::vector<int32_t>& qtype,
+        const std::vector<int32_t>& decide,
         std::vector<float>& logits,
         std::vector<float>& act
     );

@@ -514,6 +514,10 @@ def _lower_op(
             x_ic = x_t.shape.dims[1].evaluate({})
             if w_ic == 1 and (groups > 1 or x_ic > 1):
                 is_dw = True
+        elif len(w_t.shape.dims) == 3 and w_t.shape.dims[1].is_static():
+            # Conv1d depthwise: weight [C, 1, K]
+            if int(w_t.shape.dims[1].evaluate({})) == 1 and groups > 1:
+                is_dw = True
         elif groups > 1:
             is_dw = True
 
@@ -694,6 +698,9 @@ def _lower_op(
                 ):
                     mask_t.data = np.clip(mask_t.data, -32768.0, 0.0)
         return GGMLOpDef(op.id, GGMLOpCode.GGML_OP_FLASH_ATTN_EXT, in_ids, out_ids, attrs, op.name)
+    elif opcode == OpCode.GATED_DELTA_NET:
+        attrs.setdefault("K", 1)
+        return GGMLOpDef(op.id, GGMLOpCode.GGML_OP_GATED_DELTA_NET, in_ids, out_ids, attrs, op.name)
     elif opcode == OpCode.ROPE:
         if len(in_ids) > 1:
             pos_t = c_graph.tensors.get(in_ids[1])

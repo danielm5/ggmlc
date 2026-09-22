@@ -4,6 +4,10 @@ A zero-dependency C++ implementation of **Laya**, the open reproduction of TypeS
 
 The neural trunk is a GGUF compiled with `ggmlc`. Sequence construction, temperatures, Shannon confidence, language routing, JSON-RPC, and the Web Studio live in C++.
 
+**Preprocessing is GGUF-defined** (`ggmlc.decision`, the System One analogue of `tokenizer.chat_template`). New architectures (Kev, …) must bake tokenizer + sequence program + postprocess knobs at compile time. The runner does not switch on model family.
+
+Already-distributed Laya GGUFs (english / multilingual / typed-decisions) predate that key. If `ggmlc.decision` is missing, `laya.exe` **assumes the built-in Laya preprocessor** so existing downloads keep working. Do not ship any non-Laya GGUF without `ggmlc.decision`.
+
 Checkpoints (same contract, different encoder / context):
 
 | Family | Hugging Face | Encoder | Params | Context | Use it for |
@@ -199,6 +203,10 @@ TypeSafe SDK smoke (server must already be listening):
 .\build-win-cuda\examples\laya\laya.exe serve scratch\laya_english_f16.gguf --port 18080 --device auto --cuda-graph
 uv pip install typesafe-sdk
 .venv\Scripts\python.exe scratch\test_laya_typesafe_sdk.py --base-url http://127.0.0.1:18080
+
+# Same suite against a Kev GGUF (TypeSafe `model` must match GET /v1/models):
+.\build-win-cuda\examples\laya\laya.exe serve scratch\kev_0.8b_f16.gguf --port 18081 --device auto --cuda-graph
+.venv\Scripts\python.exe scratch\test_laya_typesafe_sdk.py --base-url http://127.0.0.1:18081 --model kev-0.8b
 ```
 
 - Differential: live `laya.Agent` vs `LayaCleanTrunk` vs `scratch/laya_english_f16.gguf` (and other GGUFs when present).
@@ -225,9 +233,18 @@ uv pip install laya
 
 # Or everything the script knows about at one quant
 .\.venv\Scripts\python.exe examples\laya\compile_laya.py --family all --quantize q8_0
+
+# Kev-0.5B (Qwen2.5): merge rank-16 LoRA into the base weights in fp32, then compile.
+# Adapters are refused — the GGUF is a dense fused backbone + pointer head (~964 MB F16).
+# The compile writes ggmlc.decision (sequence + postprocess). Required for any non-Laya GGUF.
+uv pip install "kev @ git+https://github.com/jaredpalmer/kev.git"
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.5b --quantize f16
+
+# Kev-0.8B (Qwen3.5 hybrid Gated DeltaNet). Same recipe key; larger download.
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.8b --quantize f16
 ```
 
-Outputs land in `scratch/laya_{family}_{quant}.gguf`. RoPE fusion is **disabled**: Laya uses two precomputed thetas (full 160000, sliding 10000). Folding that pattern into `GGML_OP_ROPE` is incorrect.
+Outputs land in `scratch/laya_{family}_{quant}.gguf` or `scratch/kev_{size}_f16.gguf`. Laya RoPE fusion is **disabled**: Laya uses two precomputed thetas (full 160000, sliding 10000). Folding that pattern into `GGML_OP_ROPE` is incorrect. Kev compile also leaves `enable_rope` off (Qwen3.5 uses partial rotary). Already-published Laya GGUFs without `ggmlc.decision` still run: the C++ binary falls back to the original Laya encoder.
 
 Dynamic export: batch `b ∈ [1, 8]`, sequence `s ∈ [64, max_len]` (`max_len` is 512 for English and 1024 for the other two). Runtime matches Python `collate_items`: pad to `max(len_i)` in the chunk. CUDA keeps `B·S ≤ 1024` on a 6 GB laptop (arena reuse is on).
 

@@ -235,6 +235,18 @@ ModelRef resolve_model_name(const std::string& model) {
         out.family = "typed-decisions";
         return out;
     }
+    if (s == "kev" || s == "kev-0.5b" || s == "0.5b" || s == "jaredpalmer/kev-0.5b") {
+        out.family = "kev-0.5b";
+        return out;
+    }
+    if (s == "kev-0.8b" || s == "0.8b" || s == "jaredpalmer/kev-0.8b") {
+        out.family = "kev-0.8b";
+        return out;
+    }
+    if (s == "kev-4b" || s == "4b" || s == "jaredpalmer/kev-4b") {
+        out.family = "kev-4b";
+        return out;
+    }
     out.unknown = true;
     out.family = s;
     return out;
@@ -246,6 +258,9 @@ std::string infer_family(const std::string& path, const std::string& model_name,
     if (blob.find("multilingual") != std::string::npos || blob.find("mmbert") != std::string::npos)
         return "multilingual";
     if (blob.find("english") != std::string::npos) return "english";
+    if (blob.find("kev-4b") != std::string::npos || blob.find("kev_4b") != std::string::npos) return "kev-4b";
+    if (blob.find("kev-0.8b") != std::string::npos || blob.find("kev_0.8b") != std::string::npos) return "kev-0.8b";
+    if (blob.find("kev-0.5b") != std::string::npos || blob.find("kev_0.5b") != std::string::npos) return "kev-0.5b";
     if (model_name == "laya" || checkpoint.find("convaiinnovations/laya") != std::string::npos) {
         if (checkpoint.find("multilingual") != std::string::npos) return "multilingual";
         if (checkpoint.find("typed") != std::string::npos) return "typed-decisions";

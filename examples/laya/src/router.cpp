@@ -1,4 +1,5 @@
 #include "router.h"
+#include "recipe.h"
 
 #include <algorithm>
 #include <cctype>
@@ -30,35 +31,33 @@ static bool matches_typed_workflow(const std::vector<Question>& questions) {
     return false;
 }
 
-static std::string family_from_graph(const ggmlc::SerializedModelGraph& g, const std::string& path) {
-    auto meta = [&](const std::string& key) -> std::string {
-        auto it = g.metadata_str.find(key);
-        return it == g.metadata_str.end() ? std::string() : it->second;
-    };
-    std::string fam = meta("laya.family");
-    if (!fam.empty()) return fam;
-    return infer_family(path, meta("laya.model_name"), meta("laya.checkpoint"));
-}
-
-bool DecisionRouter::consider_gguf(const std::string& path) {
+static bool consider_gguf_impl(
+    const std::string& path,
+    bool explicit_path,
+    std::unordered_map<std::string, std::string>& paths
+) {
     try {
         auto graph = ggmlc::ModelLoader::load_from_file(path);
         auto meta = [&](const std::string& key) -> std::string {
             auto it = graph.metadata_str.find(key);
             return it == graph.metadata_str.end() ? std::string() : it->second;
         };
+        DecisionRecipe rec;
+        rec.load_from_graph(graph, path);
         const std::string tagged = meta("laya.family") + meta("laya.model_name") + meta("laya.checkpoint");
-        const std::string lower_path = path;
-        const bool name_laya = lower_path.find("laya") != std::string::npos ||
-                               lower_path.find("Laya") != std::string::npos;
-        if (tagged.empty() && !name_laya) {
+        const bool name_laya = path.find("laya") != std::string::npos || path.find("Laya") != std::string::npos;
+        // Directory scans skip unrelated GGUFs. An explicit path is always a
+        // decision model; missing ggmlc.decision means Laya (distributed-file compat).
+        if (!explicit_path && !rec.baked && tagged.empty() && !name_laya) {
             return false;
         }
-        const std::string fam = family_from_graph(graph, path);
-        auto it = paths_.find(fam);
-        if (it == paths_.end() || quant_rank(path) > quant_rank(it->second)) {
-            paths_[fam] = path;
-            std::cerr << "[laya] catalog " << fam << " <- " << path << std::endl;
+        std::string fam = rec.family;
+        if (fam.empty()) fam = infer_family(path, rec.model_name, rec.checkpoint);
+        auto it = paths.find(fam);
+        if (it == paths.end() || quant_rank(path) > quant_rank(it->second)) {
+            paths[fam] = path;
+            std::cerr << "[laya] catalog " << fam << " <- " << path
+                      << (rec.baked ? "  [ggmlc.decision]" : "  [laya-compat]") << std::endl;
         }
         return true;
     } catch (const std::exception& e) {
@@ -67,8 +66,12 @@ bool DecisionRouter::consider_gguf(const std::string& path) {
     }
 }
 
+bool DecisionRouter::consider_gguf(const std::string& path) {
+    return consider_gguf_impl(path, false, paths_);
+}
+
 bool DecisionRouter::load_file(const std::string& gguf_path) {
-    if (!consider_gguf(gguf_path)) return false;
+    if (!consider_gguf_impl(gguf_path, true, paths_)) return false;
     if (forced_family_ == "auto" && paths_.size() == 1) {
         forced_family_ = paths_.begin()->first;
     }
@@ -135,6 +138,7 @@ std::string DecisionRouter::choose_family(const JsonValue& state, const std::vec
                                           const std::string& model) const {
     ModelRef ref = resolve_model_name(model);
     if (ref.unknown) {
+        if (paths_.count(ref.family)) return ref.family;
         throw std::runtime_error("unknown model '" + model + "'");
     }
     if (!ref.auto_route) return ref.family;

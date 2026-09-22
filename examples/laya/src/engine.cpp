@@ -14,11 +14,6 @@
 
 namespace laya {
 
-static int64_t meta_int(const ggmlc::SerializedModelGraph& g, const std::string& key, int64_t def) {
-    auto it = g.metadata_int.find(key);
-    return it == g.metadata_int.end() ? def : it->second;
-}
-
 static std::string meta_str(const ggmlc::SerializedModelGraph& g, const std::string& key, const std::string& def = "") {
     auto it = g.metadata_str.find(key);
     return it == g.metadata_str.end() ? def : it->second;
@@ -62,7 +57,13 @@ bool DecisionEngine::load_model(const std::string& gguf_path, const EngineOption
         return false;
     }
 
-    if (graph_.inputs.size() < 5 || graph_.outputs.size() < 1) {
+    recipe_.load_from_graph(graph_, gguf_path);
+    if (!recipe_.baked) {
+        std::cerr << "[laya] no ggmlc.decision in GGUF; using built-in Laya preprocessor "
+                     "(compat with already-distributed english/multilingual/typed GGUFs)\n";
+    }
+
+    if (graph_.inputs.size() < 3 || graph_.outputs.empty()) {
         std::cerr << "[laya] unexpected graph arity: inputs=" << graph_.inputs.size()
                   << " outputs=" << graph_.outputs.size() << std::endl;
         return false;
@@ -70,40 +71,30 @@ bool DecisionEngine::load_model(const std::string& gguf_path, const EngineOption
 
     in_ids_ = find_input(graph_, {"input_ids", "ids"}, graph_.inputs[0]);
     in_att_ = find_input(graph_, {"attention_mask", "attn"}, graph_.inputs.size() > 1 ? graph_.inputs[1] : graph_.inputs[0]);
-    in_mpos_ = find_input(graph_, {"marker_pos"}, graph_.inputs.size() > 2 ? graph_.inputs[2] : graph_.inputs[0]);
-    in_mmask_ = find_input(graph_, {"marker_mask"}, graph_.inputs.size() > 3 ? graph_.inputs[3] : graph_.inputs[0]);
-    in_qtype_ = find_input(graph_, {"qtype"}, graph_.inputs.size() > 4 ? graph_.inputs[4] : graph_.inputs[0]);
+    in_mpos_ = find_input(graph_, {"marker_pos", "opt_pos"}, graph_.inputs.size() > 2 ? graph_.inputs[2] : graph_.inputs[0]);
+    in_mmask_ = find_input(graph_, {"marker_mask", "opt_mask"}, graph_.inputs.size() > 3 ? graph_.inputs[3] : graph_.inputs[0]);
+    has_qtype_ = recipe_.has_qtype_input;
+    has_decide_ = recipe_.has_decide_input;
+    has_act_ = recipe_.has_act;
+    in_qtype_ = has_qtype_
+        ? find_input(graph_, {"qtype"}, graph_.inputs.size() > 4 ? graph_.inputs[4] : graph_.inputs[0])
+        : 0;
+    in_decide_ = has_decide_
+        ? find_input(graph_, {"decide_pos", "decide"}, graph_.inputs.size() > 3 ? graph_.inputs[3] : graph_.inputs[0])
+        : 0;
     out_logits_ = graph_.outputs[0];
-    out_act_ = graph_.outputs.size() > 1 ? graph_.outputs[1] : graph_.outputs[0];
+    out_act_ = (has_act_ && graph_.outputs.size() > 1) ? graph_.outputs[1] : graph_.outputs[0];
 
-    seq_.max_len = static_cast<int>(meta_int(graph_, "laya.max_len", 512));
-    seq_.head_max_len = static_cast<int>(meta_int(graph_, "laya.head_max_len", 192));
-    seq_.max_opts = static_cast<int>(meta_int(graph_, "laya.max_opts", 16));
-    seq_.mask_id = static_cast<int32_t>(meta_int(graph_, "laya.mask_token_id", 50284));
-    seq_.cls_id = static_cast<int32_t>(meta_int(graph_, "laya.cls_token_id", 50281));
-    seq_.sep_id = static_cast<int32_t>(meta_int(graph_, "laya.sep_token_id", 50282));
-    seq_.pad_id = static_cast<int32_t>(meta_int(graph_, "laya.pad_token_id", 50283));
-    max_batch_ = static_cast<int>(meta_int(graph_, "laya.max_batch", 8));
+    seq_ = SequenceConfig::from_recipe(recipe_);
+    max_batch_ = recipe_.max_batch;
     if (opt.max_batch > 0) max_batch_ = opt.max_batch;
     if (max_batch_ < 1) max_batch_ = 1;
-    min_seq_ = static_cast<int>(meta_int(graph_, "laya.min_seq", 64));
+    min_seq_ = recipe_.min_seq;
     if (min_seq_ < 1) min_seq_ = 1;
     if (min_seq_ > seq_.max_len) min_seq_ = seq_.max_len;
 
     dynamic_ = !graph_.symbol_table.empty();
-    std::string bj = meta_str(graph_, "laya.length_buckets");
-    if (!bj.empty()) {
-        try {
-            JsonValue arr = JsonParser::parse_string(bj);
-            if (arr.is_array()) {
-                length_buckets_.clear();
-                for (const auto& v : arr.arr) {
-                    if (v.is_number()) length_buckets_.push_back(static_cast<int>(v.n));
-                }
-            }
-        } catch (...) {
-        }
-    }
+    length_buckets_ = recipe_.length_buckets;
     if (length_buckets_.empty()) length_buckets_ = {64, 128, 256, 512};
     if (!dynamic_) {
         length_buckets_ = {seq_.max_len};
@@ -111,51 +102,22 @@ bool DecisionEngine::load_model(const std::string& gguf_path, const EngineOption
         max_batch_ = 1;
     }
 
-    std::string tjson = meta_str(graph_, "laya.temperature");
-    if (!tjson.empty()) {
-        try {
-            JsonValue t = JsonParser::parse_string(tjson);
-            if (t.is_array()) {
-                temperature_.resize(3, 1.0f);
-                for (size_t i = 0; i < t.arr.size() && i < 3; ++i) {
-                    if (t.arr[i].is_number()) temperature_[i] = static_cast<float>(t.arr[i].n);
-                }
-            }
-        } catch (...) {
-        }
-    }
-    std::string bjson = meta_str(graph_, "laya.temperature_by_options");
-    if (!bjson.empty()) {
-        try {
-            JsonValue b = JsonParser::parse_string(bjson);
-            if (b.is_object()) {
-                temperature_by_options_.clear();
-                for (const auto& kv : b.obj) {
-                    if (kv.second.is_number()) {
-                        temperature_by_options_[kv.first] = static_cast<float>(kv.second.n);
-                    }
-                }
-            }
-        } catch (...) {
-        }
-    }
-
     if (!tokenizer_.init_from_gguf_file(gguf_path)) {
         std::cerr << "[laya] warning: GGUF has no tokenizer metadata; sequence encoding will fail." << std::endl;
     }
 
-    model_name_ = meta_str(graph_, "laya.model_name", "laya");
-    family_ = meta_str(graph_, "laya.family", "");
+    model_name_ = recipe_.model_name.empty() ? meta_str(graph_, "laya.model_name", "laya") : recipe_.model_name;
+    family_ = recipe_.family;
     if (family_.empty()) {
-        family_ = infer_family(gguf_path, model_name_, meta_str(graph_, "laya.checkpoint"));
+        family_ = infer_family(gguf_path, model_name_, recipe_.checkpoint);
     }
 
-    // Defer prepare until the first real (B, S). A load-time [1, 512] graph
-    // pins the max activation footprint and OOMs the short buckets on 6 GB.
     if (cuda_graph_) executor_->set_enable_cuda_graph(true);
 
     loaded_ = true;
-    std::cerr << "[laya] ready  max_len=" << seq_.max_len
+    std::cerr << "[laya] ready  kind=" << recipe_.kind
+              << (recipe_.baked ? "  recipe=gguf" : "  recipe=laya-compat")
+              << "  max_len=" << seq_.max_len
               << " max_opts=" << seq_.max_opts
               << " max_batch=" << max_batch_
               << " dynamic=" << (dynamic_ ? "b,s" : "static")
@@ -247,6 +209,7 @@ void DecisionEngine::bind_and_run_batch(
     const std::vector<int32_t>& mpos,
     const std::vector<float>& mmask,
     const std::vector<int32_t>& qtype,
+    const std::vector<int32_t>& decide,
     std::vector<float>& logits,
     std::vector<float>& act
 ) {
@@ -257,7 +220,12 @@ void DecisionEngine::bind_and_run_batch(
     executor_->set_input(in_att_, att.data(), att.size() * sizeof(float));
     executor_->set_input(in_mpos_, mpos.data(), mpos.size() * sizeof(int32_t));
     executor_->set_input(in_mmask_, mmask.data(), mmask.size() * sizeof(float));
-    executor_->set_input(in_qtype_, qtype.data(), qtype.size() * sizeof(int32_t));
+    if (has_qtype_) {
+        executor_->set_input(in_qtype_, qtype.data(), qtype.size() * sizeof(int32_t));
+    }
+    if (has_decide_) {
+        executor_->set_input(in_decide_, decide.data(), decide.size() * sizeof(int32_t));
+    }
     executor_->run(n_threads_);
 
     const int opts = seq_.max_opts;
@@ -270,12 +238,14 @@ void DecisionEngine::bind_and_run_batch(
         std::memcpy(logits.data(), lp, n * sizeof(float));
     }
     act.assign(static_cast<size_t>(batch) * 2, 0.0f);
-    const float* ap = static_cast<const float*>(executor_->get_output_data(out_act_));
-    if (ap && out_act_ != out_logits_) {
-        size_t n = executor_->get_tensor_size_bytes(out_act_) / sizeof(float);
-        size_t want = static_cast<size_t>(batch) * 2;
-        if (n > want) n = want;
-        std::memcpy(act.data(), ap, n * sizeof(float));
+    if (has_act_ && out_act_ != out_logits_) {
+        const float* ap = static_cast<const float*>(executor_->get_output_data(out_act_));
+        if (ap) {
+            size_t n = executor_->get_tensor_size_bytes(out_act_) / sizeof(float);
+            size_t want = static_cast<size_t>(batch) * 2;
+            if (n > want) n = want;
+            std::memcpy(act.data(), ap, n * sizeof(float));
+        }
     }
 }
 
@@ -283,14 +253,17 @@ Answer DecisionEngine::decode_answer(
     const Question& q, const float* logits, int k, const float* act
 ) const {
     std::vector<float> z(logits, logits + std::max(0, k));
-    std::string bucket = temp_bucket(q.type, k);
-    float tscale = temperature_[static_cast<int>(q.type) % 3];
-    auto it = temperature_by_options_.find(bucket);
-    if (it != temperature_by_options_.end()) tscale = it->second;
+    float tscale = 1.0f;
+    if (!recipe_.temperature_baked) {
+        tscale = recipe_.temperature[static_cast<int>(q.type) % 3];
+        std::string bucket = temp_bucket(q.type, k);
+        auto it = recipe_.temperature_by_options.find(bucket);
+        if (it != recipe_.temperature_by_options.end()) tscale = it->second;
+    }
     std::vector<float> p = softmax_temp(z, tscale);
 
     float act_p = 0.0f;
-    if (act) {
+    if (has_act_ && act) {
         float m = std::max(act[0], act[1]);
         float e0 = std::exp(act[0] - m);
         float e1 = std::exp(act[1] - m);
@@ -309,7 +282,7 @@ Answer DecisionEngine::decode_answer(
         for (int i = 0; i < k && i < static_cast<int>(keys.size()); ++i) {
             a.probabilities.emplace_back(keys[i].first, p[i]);
         }
-        a.confidence = confidence_from_probs(p);
+        a.confidence = confidence_choice(p, recipe_.confidence);
     } else if (q.type == QType::Score) {
         float expv = 0.0f;
         for (int i = 0; i < k; ++i) {
@@ -318,14 +291,14 @@ Answer DecisionEngine::decode_answer(
             if (i < static_cast<int>(keys.size())) a.legend.push_back(keys[i].second);
         }
         a.score = expv;
-        a.confidence = confidence_from_probs(p);
+        a.confidence = confidence_score(p, recipe_.score_confidence);
     } else {
         float pt = (k >= 2) ? p[1] : 0.0f;
         a.noul = pt;
-        a.confidence = std::max(pt, 1.0f - pt);
+        a.confidence = confidence_noul(pt, recipe_.noul_confidence);
         if (k >= 2) {
-            a.probabilities.emplace_back("false", p[0]);
-            a.probabilities.emplace_back("true", p[1]);
+            a.probabilities.emplace_back(recipe_.noul_false_name, p[0]);
+            a.probabilities.emplace_back(recipe_.noul_true_name, p[1]);
         }
     }
     return a;
@@ -337,7 +310,7 @@ DecideResult DecisionEngine::decide_one(const JsonValue& state, const Question& 
 
 DecideResult DecisionEngine::decide(const JsonValue& state, const std::vector<Question>& questions) {
     DecideResult result;
-    result.model = meta_str(graph_, "laya.model_name", "laya");
+    result.model = model_name_;
     if (!loaded_ || !executor_) return result;
 
     const std::string state_text = serialize_state(state);
@@ -348,7 +321,7 @@ DecideResult DecisionEngine::decide(const JsonValue& state, const std::vector<Qu
     int tokens = 0;
     int max_live = 0;
     for (const auto& q : questions) {
-        EncodedQuestion enc = build_sequence(tokenizer_, seq_, state_text, q);
+        EncodedQuestion enc = build_sequence(tokenizer_, recipe_, state_text, q);
         tokens += static_cast<int>(enc.ids.size());
         max_live = std::max(max_live, static_cast<int>(enc.ids.size()));
         encs.push_back(std::move(enc));
@@ -394,12 +367,12 @@ DecideResult DecisionEngine::decide(const JsonValue& state, const std::vector<Qu
                 std::vector<EncodedQuestion> slice;
                 slice.reserve(static_cast<size_t>(take));
                 for (int j = 0; j < take; ++j) slice.push_back(encs[idxs[cursor + j]]);
-                std::vector<int32_t> ids, mpos, qt;
+                std::vector<int32_t> ids, mpos, qt, decide;
                 std::vector<float> att, mmask;
-                pad_encoded_batch(slice, seq_, try_b, S, ids, att, mpos, mmask, qt);
+                pad_encoded_batch(slice, recipe_, try_b, S, ids, att, mpos, mmask, qt, decide);
                 try {
                     std::vector<float> logits, act;
-                    bind_and_run_batch(try_b, S, ids, att, mpos, mmask, qt, logits, act);
+                    bind_and_run_batch(try_b, S, ids, att, mpos, mmask, qt, decide, logits, act);
                     const int opts = seq_.max_opts;
                     for (int j = 0; j < take; ++j) {
                         const int qi = idxs[cursor + j];
@@ -434,7 +407,9 @@ DecideResult DecisionEngine::decide(const JsonValue& state, const std::vector<Qu
 void DecisionEngine::print_info() const {
     std::cout << "model: " << meta_str(graph_, "general.name", graph_.name) << "\n"
               << "family: " << family_ << "\n"
-              << "checkpoint: " << meta_str(graph_, "laya.checkpoint", "") << "\n"
+              << "kind: " << recipe_.kind
+              << (recipe_.baked ? "  (ggmlc.decision)" : "  (assumed Laya; no ggmlc.decision)") << "\n"
+              << "checkpoint: " << recipe_.checkpoint << "\n"
               << "device: " << device_ << "\n"
               << "max_len: " << seq_.max_len << "  min_seq: " << min_seq_
               << "  head_max_len: " << seq_.head_max_len
@@ -448,21 +423,34 @@ void DecisionEngine::print_info() const {
     std::cout << "]\n"
               << "symbols:";
     for (const auto& s : graph_.symbol_table) std::cout << " " << s;
+    std::cout << "\n";
+    if (!recipe_.template_text.empty()) {
+        std::cout << "template: " << recipe_.template_text << "\n";
+    }
+    std::cout << "special tokens";
+    if (!recipe_.tokens.empty()) {
+        for (const auto& kv : recipe_.tokens) {
+            std::cout << "  " << kv.first << "=" << kv.second;
+        }
+    } else {
+        std::cout << "  cls=" << seq_.cls_id << " sep=" << seq_.sep_id
+                  << " pad=" << seq_.pad_id << " mask=" << seq_.mask_id;
+    }
     std::cout << "\n"
-              << "special tokens  cls=" << seq_.cls_id << " sep=" << seq_.sep_id
-              << " pad=" << seq_.pad_id << " mask=" << seq_.mask_id << "\n"
               << "vocab: " << tokenizer_.vocab_size() << "\n"
               << "inputs: " << graph_.inputs.size() << "  outputs: " << graph_.outputs.size()
               << "  ops: " << graph_.ops.size() << "\n"
               << "temperature: [";
-    for (size_t i = 0; i < temperature_.size(); ++i) {
+    for (size_t i = 0; i < recipe_.temperature.size(); ++i) {
         if (i) std::cout << ", ";
-        std::cout << temperature_[i];
+        std::cout << recipe_.temperature[i];
     }
-    std::cout << "]\n";
-    if (!temperature_by_options_.empty()) {
+    std::cout << "]";
+    if (recipe_.temperature_baked) std::cout << "  (baked into weights)";
+    std::cout << "\n";
+    if (!recipe_.temperature_by_options.empty()) {
         std::cout << "temperature_by_options:\n";
-        for (const auto& kv : temperature_by_options_) {
+        for (const auto& kv : recipe_.temperature_by_options) {
             std::cout << "  " << kv.first << " = " << kv.second << "\n";
         }
     }

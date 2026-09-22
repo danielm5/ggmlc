@@ -162,7 +162,16 @@ static std::string family_description(const std::string& family) {
     if (family == "typed-decisions") {
         return "English typed-decisions specialist (convaiinnovations/laya-typed-decisions) compiled by ggmlc.";
     }
-    return "Laya System 1 DecisionModel compiled by ggmlc.";
+    if (family == "kev-0.5b") {
+        return "Kev 0.5B (Qwen2.5 + pointer head, jaredpalmer/kev-0.5b) compiled by ggmlc.";
+    }
+    if (family == "kev-0.8b") {
+        return "Kev 0.8B (Qwen3.5 Gated DeltaNet + pointer head, jaredpalmer/kev-0.8b) compiled by ggmlc.";
+    }
+    if (family == "kev-4b") {
+        return "Kev 4B (Qwen3.5 Gated DeltaNet + pointer head, jaredpalmer/kev-4b) compiled by ggmlc.";
+    }
+    return "System 1 DecisionModel compiled by ggmlc.";
 }
 
 Server::Server(DecisionEngine& engine, int port)
@@ -220,6 +229,16 @@ JsonValue Server::models_json() const {
     }
     if (has("typed-decisions")) {
         add("laya-typed-decisions", "Alias for the typed-decisions Laya family.");
+    }
+    if (has("kev-0.5b")) {
+        add("kev", "Alias for kev-0.5b.");
+        add("jaredpalmer/kev-0.5b", "Hugging Face id for kev-0.5b.");
+    }
+    if (has("kev-0.8b")) {
+        add("jaredpalmer/kev-0.8b", "Hugging Face id for kev-0.8b.");
+    }
+    if (has("kev-4b")) {
+        add("jaredpalmer/kev-4b", "Hugging Face id for kev-4b.");
     }
     root.set("models", std::move(models));
     return root;

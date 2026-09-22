@@ -115,6 +115,17 @@ struct ggml_tensor* reshape4d_contig(
 ) {
     if (!t) return nullptr;
     if (!ggml_is_contiguous(t)) t = ggml_cont(ctx, t);
+    const int64_t have = ggml_nelements(t);
+    const int64_t want = ne0 * ne1 * ne2 * ne3;
+    if (have != want) {
+        throw std::runtime_error(
+            std::string("reshape4d_contig nelements mismatch for ") +
+            (t->name ? t->name : "?") +
+            " have=[" + std::to_string(t->ne[0]) + "," + std::to_string(t->ne[1]) + "," +
+            std::to_string(t->ne[2]) + "," + std::to_string(t->ne[3]) +
+            "] want=[" + std::to_string(ne0) + "," + std::to_string(ne1) + "," +
+            std::to_string(ne2) + "," + std::to_string(ne3) + "]");
+    }
     return ggml_reshape_4d(ctx, t, ne0, ne1, ne2, ne3);
 }
 
@@ -1377,6 +1388,11 @@ void ModelExecutor::pin_live_graph_tensors() {
         if (node->op == GGML_OP_FLASH_ATTN_EXT && node->src[3]) {
             ggml_set_output(node->src[3]);
         }
+        if (node->op == GGML_OP_GATED_DELTA_NET) {
+            for (int s = 0; s < 6; ++s) {
+                if (node->src[s]) ggml_set_output(node->src[s]);
+            }
+        }
     }
 }
 
@@ -2322,6 +2338,24 @@ void ModelExecutor::prepare(const std::unordered_map<std::string, int64_t>& symb
                         }
                     }
                 }
+                if (!in0 || !in1 || in0->ne[0] != in1->ne[0] ||
+                    (in1->ne[2] % in0->ne[2] != 0) || (in1->ne[3] % in0->ne[3] != 0) ||
+                    ggml_is_transposed(in0)) {
+                    char buf[512];
+                    snprintf(buf, sizeof(buf),
+                        "MUL_MAT shape error op=%s out=%u\n"
+                        "  in0 %s type=%d ne=[%lld,%lld,%lld,%lld] trans=%d\n"
+                        "  in1 %s type=%d ne=[%lld,%lld,%lld,%lld]",
+                        op.name.c_str(), out_id,
+                        in0 ? in0->name : "null", in0 ? (int)in0->type : -1,
+                        in0 ? (long long)in0->ne[0] : 0, in0 ? (long long)in0->ne[1] : 0,
+                        in0 ? (long long)in0->ne[2] : 0, in0 ? (long long)in0->ne[3] : 0,
+                        in0 ? (int)ggml_is_transposed(in0) : 0,
+                        in1 ? in1->name : "null", in1 ? (int)in1->type : -1,
+                        in1 ? (long long)in1->ne[0] : 0, in1 ? (long long)in1->ne[1] : 0,
+                        in1 ? (long long)in1->ne[2] : 0, in1 ? (long long)in1->ne[3] : 0);
+                    throw std::runtime_error(buf);
+                }
                 if (in0->ne[0] != in1->ne[0]) {
                     fprintf(stderr, "[MUL_MAT CANNOT COMPUTE!] op=%s explicit_trans=%d trans_in0=%d\n  in0 name=%s ne=[%lld,%lld,%lld,%lld]\n  in1 name=%s ne=[%lld,%lld,%lld,%lld]\n",
                         op.name.c_str(), (int)explicit_transpose, (int)transpose_in0,
@@ -2507,13 +2541,35 @@ void ModelExecutor::prepare(const std::unordered_map<std::string, int64_t>& symb
             }
             case GGML_OP_CONV_2D_DW: {
                 // in0: weight [KW, KH, 1, C], in1: x [W, H, C, N]
+                bool is_1d = op.attributes.count("is_1d") && op.attributes.at("is_1d") != 0;
+                if (is_1d) {
+                    if (in0->ne[3] == 1) {
+                        in0 = reshape4d_contig(ctx_, in0, in0->ne[0], 1, in0->ne[1], in0->ne[2]);
+                    }
+                    if (in1->ne[3] == 1) {
+                        in1 = reshape4d_contig(ctx_, in1, in1->ne[0], 1, in1->ne[1], in1->ne[2]);
+                    }
+                }
                 int s0 = op.attributes.count("stride_w") ? static_cast<int>(op.attributes.at("stride_w")) : 1;
                 int s1 = op.attributes.count("stride_h") ? static_cast<int>(op.attributes.at("stride_h")) : 1;
                 int p0 = op.attributes.count("pad_w") ? static_cast<int>(op.attributes.at("pad_w")) : 0;
                 int p1 = op.attributes.count("pad_h") ? static_cast<int>(op.attributes.at("pad_h")) : 0;
                 int d0 = op.attributes.count("dilation_w") ? static_cast<int>(op.attributes.at("dilation_w")) : 1;
                 int d1 = op.attributes.count("dilation_h") ? static_cast<int>(op.attributes.at("dilation_h")) : 1;
-                result = ggml_conv_2d_dw(ctx_, in0, in1, s0, s1, p0, p1, d0, d1);
+                // ggml_conv_2d_dw expands to im2col+mul_mat and asserts on 1D [KW,1,C,1]
+                // kernels. ggml_conv_2d_dw_direct wants [KW,KH,1,C] x [W,H,C,N].
+                if (in0->ne[2] != 1 && in0->ne[3] == 1) {
+                    in0 = reshape4d_contig(ctx_, in0, in0->ne[0], in0->ne[1], 1, in0->ne[2]);
+                }
+                if (!in0 || !in1 || in0->ne[2] != 1 || in0->ne[3] != in1->ne[2]) {
+                    throw std::runtime_error(
+                        "CONV_2D_DW layout: weight [KW,KH,1,C] input [W,H,C,N]");
+                }
+                // CUDA conv2d-dw is F32-only.
+                if (in0->type != GGML_TYPE_F32) in0 = ggml_cast(ctx_, in0, GGML_TYPE_F32);
+                if (in1->type != GGML_TYPE_F32) in1 = ggml_cast(ctx_, in1, GGML_TYPE_F32);
+                result = is_1d ? ggml_conv_2d_dw_direct(ctx_, in0, in1, s0, s1, p0, p1, d0, d1)
+                               : ggml_conv_2d_dw(ctx_, in0, in1, s0, s1, p0, p1, d0, d1);
                 if (op.inputs.size() > 2) {
                     struct ggml_tensor* bias = ggml_tensors_[op.inputs[2]];
                     if (bias) {
@@ -2529,6 +2585,9 @@ void ModelExecutor::prepare(const std::unordered_map<std::string, int64_t>& symb
                 }
                 if (op.attributes.count("fused_relu") && op.attributes.at("fused_relu") != 0) {
                     result = ggml_relu(ctx_, result);
+                }
+                if (is_1d && result && result->ne[1] == 1) {
+                    result = reshape4d_contig(ctx_, result, result->ne[0], result->ne[2], result->ne[3], 1);
                 }
                 break;
             }
@@ -2623,6 +2682,45 @@ void ModelExecutor::prepare(const std::unordered_map<std::string, int64_t>& symb
                 } else {
                     result = ggml_swiglu_split(ctx_, in0, in1);
                 }
+                break;
+            }
+            case GGML_OP_GATED_DELTA_NET: {
+                struct ggml_tensor* q = in0;
+                struct ggml_tensor* k = in1;
+                struct ggml_tensor* v = op.inputs.size() > 2 ? ggml_tensors_[op.inputs[2]] : nullptr;
+                struct ggml_tensor* g = op.inputs.size() > 3 ? ggml_tensors_[op.inputs[3]] : nullptr;
+                struct ggml_tensor* beta = op.inputs.size() > 4 ? ggml_tensors_[op.inputs[4]] : nullptr;
+                struct ggml_tensor* state = op.inputs.size() > 5 ? ggml_tensors_[op.inputs[5]] : nullptr;
+                if (!q || !k || !v || !g || !beta || !state) {
+                    throw std::runtime_error("GGML_OP_GATED_DELTA_NET requires q,k,v,g,beta,state");
+                }
+                auto as_f32_cont = [&](struct ggml_tensor* t) {
+                    if (!t) return t;
+                    if (t->type != GGML_TYPE_F32) t = ggml_cast(ctx_, t, GGML_TYPE_F32);
+                    if (!ggml_is_contiguous(t)) t = ggml_cont(ctx_, t);
+                    return t;
+                };
+                q = as_f32_cont(q);
+                k = as_f32_cont(k);
+                v = as_f32_cont(v);
+                g = as_f32_cont(g);
+                beta = as_f32_cont(beta);
+                state = as_f32_cont(state);
+                int64_t K = 1;
+                if (op.attributes.count("K")) K = op.attributes.at("K");
+                if (K < 1) K = 1;
+                struct ggml_tensor* packed = ggml_gated_delta_net(ctx_, q, k, v, g, beta, state, K);
+                const int64_t Sv = v->ne[0];
+                const int64_t H = v->ne[1];
+                const int64_t T = v->ne[2];
+                const int64_t B = v->ne[3];
+                struct ggml_tensor* scores = ggml_view_4d(
+                    ctx_, packed, Sv, H, T, B,
+                    packed->nb[0] * Sv,
+                    packed->nb[0] * Sv * H,
+                    packed->nb[0] * Sv * H * T,
+                    0);
+                result = ggml_cont(ctx_, scores);
                 break;
             }
             default:
