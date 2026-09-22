@@ -67,7 +67,6 @@ private:
     bool has_decide_ = false;
     bool has_act_ = true;
 
-    int length_bucket(int n) const;
     int clamp_seq(int n) const;
     int batch_cap_for_seq(int seq_len) const;
     void fill_symbol_env(int batch, int seq_len, std::unordered_map<std::string, int64_t>& env) const;

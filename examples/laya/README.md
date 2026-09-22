@@ -174,7 +174,7 @@ with TypeSafeClient(api_key="local", base_url="http://127.0.0.1:8080") as client
 
 Jev/Laya exist for **short decision latency**, not frontier generation. One typed question is one encoder forward. `bench` reports wall clock, live pad length `S`, batch `B`, forwards, and questions/s after warmup.
 
-**Hardware (2026-09-20):** NVIDIA GeForce RTX 4050 Laptop GPU 6 GB (CC 8.9), Windows, English F16 GGUF ~847 MB. Dynamic `b`/`s`, pad to `max(len_i)` in the chunk (Python `collate_items`), CUDA batch cap `B·S ≤ 1024`, `ggml_gallocr` arena reuse on. C++ warmup 5 / runs 7. Python `laya.Agent` collates questions to the live max length and runs one SDPA forward — it does not concat-pack sequences.
+**Hardware (2026-09-20):** NVIDIA GeForce RTX 4050 Laptop GPU 6 GB (CC 8.9), Windows, English F16 GGUF ~847 MB. Dynamic `b`/`s`, pad to `max(len_i)` across the request (Python `collate_items`), CUDA token budget `B·S ≤ 8192` then OOM-halve, `ggml_gallocr` arena reuse on. C++ warmup 5 / runs 7. Python `laya.Agent` collates questions to the live max length and runs one SDPA forward — it does not concat-pack sequences. A 2026-09-22 remeasure of the English email preset was **147 ms** p50 (still one `B=7, S=124` forward).
 
 | Path | Shape | Single noul (p50) | Email 7-question wall (p50) | Throughput |
 | :--- | :--- | :---: | :---: | :--- |
@@ -187,6 +187,28 @@ Previous static `[1, 512]` C++ path was **234 ms**/noul and **1.45 s** for the e
 
 ```powershell
 laya bench scratch\laya_english_f16.gguf --preset email --device auto --cuda-graph --warmup 5 --runs 7
+```
+
+### Kev 0.5B and 0.8B
+
+Same email preset and the same wall-clock measurement (`laya.exe bench` vs official `kev` `DecisionModel.forward`, merged LoRA, fp32, one CUDA forward). GGUFs are F16. Qwen3.5 PyTorch on this machine uses the reference Gated DeltaNet (`flash-linear-attention` is not installed); ggmlc lowers that op to `GGML_OP_GATED_DELTA_NET`.
+
+**Hardware (2026-09-22):** same RTX 4050 Laptop. Every row is one forward.
+
+| Model | Path | Single noul (p50) | Email 7-question wall (p50) | Shape |
+| :--- | :--- | :---: | :---: | :--- |
+| **Kev 0.5B** | **`laya.exe` CUDA + graph** | **17.9 ms** (best 17.5) | **101.5 ms** (best 97.9) | S=68 B=1 / S=122 B=7 |
+| Kev 0.5B | PyTorch fp32 | 75.1 ms (best 43.5) | 109.4 ms (best 105.9) | one padded batch |
+| **Kev 0.8B** | **`laya.exe` CUDA + graph** | **69.4 ms** (best 67.6) | **464.6 ms** (best 450.9) | S=176 B=1 / S=316 B=7 |
+| Kev 0.8B | PyTorch fp32 | 114.3 ms (best 97.5) | 494.2 ms (best 460.2) | one padded batch |
+
+Splitting the 0.8B email by length bucket was three weight reads (**~927 ms**). One pad-to-max batch (`B=7, S=316`) is what matches PyTorch.
+
+```powershell
+.\build-win-cuda\examples\laya\laya.exe bench scratch\kev_0.5b_f16.gguf --preset email --device cuda --cuda-graph --warmup 3 --runs 5
+.\build-win-cuda\examples\laya\laya.exe bench scratch\kev_0.8b_f16.gguf --preset email --device cuda --cuda-graph --warmup 5 --runs 7
+.\.venv\Scripts\python.exe scratch\bench_kev.py --repo jaredpalmer/kev-0.5b --device cuda --dtype fp32
+.\.venv\Scripts\python.exe scratch\bench_kev.py --repo jaredpalmer/kev-0.8b --device cuda --dtype fp32
 ```
 
 ---
@@ -246,7 +268,7 @@ uv pip install "kev @ git+https://github.com/jaredpalmer/kev.git"
 
 Outputs land in `scratch/laya_{family}_{quant}.gguf` or `scratch/kev_{size}_f16.gguf`. Laya RoPE fusion is **disabled**: Laya uses two precomputed thetas (full 160000, sliding 10000). Folding that pattern into `GGML_OP_ROPE` is incorrect. Kev compile also leaves `enable_rope` off (Qwen3.5 uses partial rotary). Already-published Laya GGUFs without `ggmlc.decision` still run: the C++ binary falls back to the original Laya encoder.
 
-Dynamic export: batch `b ∈ [1, 8]`, sequence `s ∈ [64, max_len]` (`max_len` is 512 for English and 1024 for the other two). Runtime matches Python `collate_items`: pad to `max(len_i)` in the chunk. CUDA keeps `B·S ≤ 1024` on a 6 GB laptop (arena reuse is on).
+Dynamic export: batch `b ∈ [1, 8]`, sequence `s ∈ [64, max_len]` (`max_len` is 512 for English, 1024 for the other Laya families, 2048 for Kev). Runtime matches Python `collate_items`: one batch padded to `max(len_i)`. CUDA keeps `B·S ≤ 8192` on a 6 GB laptop, then halves `B` on OOM (arena reuse is on).
 
 ---
 

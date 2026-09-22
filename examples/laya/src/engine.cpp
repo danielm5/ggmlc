@@ -125,20 +125,6 @@ bool DecisionEngine::load_model(const std::string& gguf_path, const EngineOption
     return true;
 }
 
-int DecisionEngine::length_bucket(int n) const {
-    int cap = seq_.max_len;
-    int chosen = cap;
-    for (int b : length_buckets_) {
-        if (b >= n && b <= cap) {
-            chosen = b;
-            break;
-        }
-        if (b <= cap) chosen = b;
-    }
-    if (n > chosen) chosen = cap;
-    return chosen;
-}
-
 int DecisionEngine::clamp_seq(int n) const {
     int s = std::max(n, min_seq_);
     if (s > seq_.max_len) s = seq_.max_len;
@@ -147,8 +133,11 @@ int DecisionEngine::clamp_seq(int n) const {
 
 int DecisionEngine::batch_cap_for_seq(int seq_len) const {
     if (!dynamic_ || seq_len <= 0) return 1;
-    // gallocr reuses activations; keep a laptop VRAM ceiling with OOM-halve fallback.
-    const int budget = (device_ == "cpu") ? 2048 : 1024;
+    // Token budget before the OOM-halve fallback. 1024 forced Kev's 7-row
+    // email (S≈316) into three weight reads; one padded batch fits the 6 GB
+    // laptop and matches Python collate. Laya's published email shape
+    // (S=124, B=7) stays under max_batch either way.
+    const int budget = (device_ == "cpu") ? 8192 : 8192;
     int cap = std::max(1, budget / seq_len);
     return std::min(cap, max_batch_);
 }
@@ -327,21 +316,16 @@ DecideResult DecisionEngine::decide(const JsonValue& state, const std::vector<Qu
         encs.push_back(std::move(enc));
     }
 
-    // Group by coarse length so a 400-token question does not pad 80-token
-    // neighbours. Within a group, pad like Python collate_items: S = max(len_i),
-    // attention_mask zeros the pads. That is not concat packing — FlashAttention
-    // stays rectangular B×S, not one S=sum sequence with a block-diagonal mask.
-    std::unordered_map<int, std::vector<int>> groups;
-    for (int i = 0; i < static_cast<int>(encs.size()); ++i) {
-        groups[length_bucket(static_cast<int>(encs[i].ids.size()))].push_back(i);
-    }
+    // One rectangular batch padded to max(len_i). Attention stays B×S
+    // (not concat-packed). Chunk only when B*S exceeds batch_cap_for_seq.
+    std::vector<int> idxs(encs.size());
+    std::iota(idxs.begin(), idxs.end(), 0);
 
     result.answers.assign(questions.size(), Answer{});
     result.input_tokens = tokens;
     result.seq_bucket = max_live > 0 ? clamp_seq(max_live) : 0;
 
-    for (auto& g : groups) {
-        auto& idxs = g.second;
+    {
         int S = min_seq_;
         for (int qi : idxs) {
             S = std::max(S, clamp_seq(static_cast<int>(encs[qi].ids.size())));
@@ -415,7 +399,7 @@ void DecisionEngine::print_info() const {
               << "  head_max_len: " << seq_.head_max_len
               << "  max_opts: " << seq_.max_opts << "  max_batch: " << max_batch_ << "\n"
               << "dynamic: " << (dynamic_ ? "b,s" : "static")
-              << "  pad: max-in-batch  groups: [";
+              << "  pad: max-in-batch  metadata buckets: [";
     for (size_t i = 0; i < length_buckets_.size(); ++i) {
         if (i) std::cout << ", ";
         std::cout << length_buckets_[i];
