@@ -9,7 +9,7 @@ from ggmlc.dialect.ggml.ops import GGMLOpCode, GGMLType, GGMLUnaryOpCode
 from ggmlc.ir.dtype import DType
 from ggmlc.ir.graph import Graph
 from ggmlc.ir.op import OpCode, Operation
-from ggmlc.ir.shape import Dim, Shape, StaticDim
+from ggmlc.ir.shape import Dim, MulDim, Shape, StaticDim
 from ggmlc.ir.tensor import StorageClass
 from ggmlc.transforms.fusion import FusionOptions, fuse_operations
 
@@ -48,13 +48,15 @@ def canonical_shape_to_ggml_ne(shape: Shape) -> tuple[Dim, Dim, Dim, Dim]:
     elif len(dims) == 4:
         return (dims[3], dims[2], dims[1], dims[0])
     else:
-        outer_val = 1
+        outer: Dim = StaticDim(1)
         for d in dims[:-3]:
-            if isinstance(d, StaticDim):
-                outer_val *= d.value
+            if isinstance(outer, StaticDim) and isinstance(d, StaticDim):
+                outer = StaticDim(outer.value * d.value)
+            elif isinstance(outer, StaticDim) and outer.value == 1:
+                outer = d
             else:
-                outer_val *= int(d)
-        return (dims[-1], dims[-2], dims[-3], StaticDim(outer_val))
+                outer = MulDim(outer, d)
+        return (dims[-1], dims[-2], dims[-3], outer)
 
 
 @dataclass
@@ -514,6 +516,10 @@ def _lower_op(
             x_ic = x_t.shape.dims[1].evaluate({})
             if w_ic == 1 and (groups > 1 or x_ic > 1):
                 is_dw = True
+        elif len(w_t.shape.dims) == 3 and w_t.shape.dims[1].is_static():
+            # Conv1d depthwise: weight [C, 1, K]
+            if int(w_t.shape.dims[1].evaluate({})) == 1 and groups > 1:
+                is_dw = True
         elif groups > 1:
             is_dw = True
 
@@ -694,6 +700,9 @@ def _lower_op(
                 ):
                     mask_t.data = np.clip(mask_t.data, -32768.0, 0.0)
         return GGMLOpDef(op.id, GGMLOpCode.GGML_OP_FLASH_ATTN_EXT, in_ids, out_ids, attrs, op.name)
+    elif opcode == OpCode.GATED_DELTA_NET:
+        attrs.setdefault("K", 1)
+        return GGMLOpDef(op.id, GGMLOpCode.GGML_OP_GATED_DELTA_NET, in_ids, out_ids, attrs, op.name)
     elif opcode == OpCode.ROPE:
         if len(in_ids) > 1:
             pos_t = c_graph.tensors.get(in_ids[1])

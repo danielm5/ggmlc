@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(LAYA_SOURCES
     src/questions.cpp
     src/sequence.cpp
+    src/recipe.cpp
     src/presets.cpp
     src/language.cpp
     src/router.cpp

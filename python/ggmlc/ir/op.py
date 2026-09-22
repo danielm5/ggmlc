@@ -71,6 +71,7 @@ class OpCode(Enum):
 
     # Custom/Special
     SWIGLU = "swiglu"
+    GATED_DELTA_NET = "gated_delta_net"
 
     # Vision & Convolution
     CONV2D = "conv2d"

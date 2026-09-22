@@ -17,11 +17,13 @@
 # and vocabulary.
 #
 
-import sys
 import json
 import struct
+import sys
+
 import numpy as np
 import tensorflow as tf
+
 
 # ref: https://github.com/openai/gpt-2/blob/master/src/encoder.py
 def bytes_to_unicode():
@@ -34,16 +36,21 @@ def bytes_to_unicode():
     To avoid that, we want lookup tables between utf-8 bytes and unicode strings.
     And avoids mapping to whitespace/control characters the bpe code barfs on.
     """
-    bs = list(range(ord("!"), ord("~")+1))+list(range(ord("¡"), ord("¬")+1))+list(range(ord("®"), ord("ÿ")+1))
+    bs = (
+        list(range(ord("!"), ord("~") + 1))
+        + list(range(ord("¡"), ord("¬") + 1))
+        + list(range(ord("®"), ord("ÿ") + 1))
+    )
     cs = bs[:]
     n = 0
     for b in range(2**8):
         if b not in bs:
             bs.append(b)
-            cs.append(2**8+n)
+            cs.append(2**8 + n)
             n += 1
     cs = [chr(n) for n in cs]
     return dict(zip(bs, cs))
+
 
 # helper method to convert a numpy array to different float types
 def convert_to_ftype(data, ftype):
@@ -52,6 +59,7 @@ def convert_to_ftype(data, ftype):
         return data.astype(np.float16)
 
     assert False, "Invalid ftype: " + str(ftype)
+
 
 if len(sys.argv) < 3:
     print("Usage: convert-ckpt-to-ggml.py dir-model ftype\n")
@@ -88,7 +96,7 @@ list_vars = tf.train.list_variables(dir_model)
 
 fout = open(fname_out, "wb")
 
-fout.write(struct.pack("i", 0x67676d6c)) # magic: ggml in hex
+fout.write(struct.pack("i", 0x67676D6C))  # magic: ggml in hex
 fout.write(struct.pack("i", hparams["n_vocab"]))
 fout.write(struct.pack("i", hparams["n_ctx"]))
 fout.write(struct.pack("i", hparams["n_embd"]))
@@ -97,7 +105,7 @@ fout.write(struct.pack("i", hparams["n_layer"]))
 fout.write(struct.pack("i", ftype))
 
 byte_encoder = bytes_to_unicode()
-byte_decoder = {v:k for k, v in byte_encoder.items()}
+byte_decoder = {v: k for k, v in byte_encoder.items()}
 
 fout.write(struct.pack("i", len(encoder)))
 
@@ -110,17 +118,18 @@ for name, shape in list_vars:
     print("Processing variable: " + name + " with shape: ", shape)
 
     data = tf.train.load_variable(dir_model, name).squeeze()
-    n_dims = len(data.shape);
-
+    n_dims = len(data.shape)
     # for efficiency - transpose the projection matrices
     # "model/h.*/attn/c_attn/w"
     # "model/h.*/attn/c_proj/w"
     # "model/h.*/mlp/c_fc/w"
     # "model/h.*/mlp/c_proj/w"
-    if name[-14:] == "/attn/c_attn/w" or \
-       name[-14:] == "/attn/c_proj/w" or \
-       name[-11:] == "/mlp/c_fc/w" or \
-       name[-13:] == "/mlp/c_proj/w":
+    if (
+        name[-14:] == "/attn/c_attn/w"
+        or name[-14:] == "/attn/c_proj/w"
+        or name[-11:] == "/mlp/c_fc/w"
+        or name[-13:] == "/mlp/c_proj/w"
+    ):
         print("  Transposing")
         data = data.transpose()
 
@@ -144,16 +153,14 @@ for name, shape in list_vars:
             ftype_cur = 0
 
     # header
-    str = name.encode('utf-8')
+    str = name.encode("utf-8")
     fout.write(struct.pack("iii", n_dims, len(str), ftype_cur))
-    for i in range(n_dims):
-        fout.write(struct.pack("i", dshape[n_dims - 1 - i]))
-    fout.write(str);
-
+    fout.writelines(struct.pack("i", dshape[n_dims - 1 - i]) for i in range(n_dims))
+    fout.write(str)
     # data
     data.tofile(fout)
 
 fout.close()
 
 print("Done. Output file: " + fname_out)
-print("")
+print()

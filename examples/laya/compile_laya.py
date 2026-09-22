@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "examples" / "laya"))
 import ggmlc
 import laya
 import torch
+from ggmlc.pipeline.decision import DecisionPipelineSpec
 from ggmlc.pipeline.tokenizer import BPETokenizer
 from ggmlc.transforms.fusion import FusionOptions
 from laya.common import QTYPES, build_sequence, collate_items
@@ -159,6 +160,23 @@ def compile_one(
     print("example shapes", [tuple(t.shape) for t in example], [t.dtype for t in example])
 
     tok = _pipeline_tokenizer(agent, spec["pre_tokenizer"], max_len)
+    decision = DecisionPipelineSpec.laya(
+        cls_id=int(agent.tok.cls_token_id),
+        sep_id=int(agent.tok.sep_token_id),
+        pad_id=int(agent.tok.pad_token_id),
+        mask_id=int(agent.tok.mask_token_id),
+        max_len=max_len,
+        head_max_len=head_max_len,
+        max_opts=MAX_OPTS,
+        min_seq=int(min_seq),
+        max_batch=int(max_batch),
+        length_buckets=_length_buckets(max_len),
+        temperature=agent.temperature,
+        temperature_by_options=dict(agent.temperature_by_options),
+        model_name=spec["model_name"],
+        family=spec["family"],
+        checkpoint=spec["repo"],
+    )
     extra = {
         "laya.max_len": max_len,
         "laya.head_max_len": head_max_len,
@@ -176,6 +194,7 @@ def compile_one(
         "laya.family": spec["family"],
         "laya.checkpoint": spec["repo"],
     }
+    extra.update(decision.to_gguf_metadata())
 
     if output is None:
         suffix = quantize.replace("-", "_")

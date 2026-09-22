@@ -94,6 +94,8 @@ ATEN_OP_MAP: dict[str, OpCode] = {
     "aten.sum.dim_IntList": OpCode.SUM,
     "aten.mean.dim": OpCode.MEAN,
     "aten.scaled_dot_product_attention.default": OpCode.SDPA,
+    "ggmlc.gated_delta_net.default": OpCode.GATED_DELTA_NET,
+    "ggmlc::gated_delta_net": OpCode.GATED_DELTA_NET,
     "aten.native_layer_norm.default": OpCode.LAYER_NORM,
     "aten.layer_norm.default": OpCode.LAYER_NORM,
     "aten.rms_norm.default": OpCode.RMS_NORM,
@@ -125,6 +127,8 @@ ATEN_OP_MAP: dict[str, OpCode] = {
 
 def get_opcode_for_aten(target: Any) -> OpCode | None:
     name = str(target)
+    if "gated_delta_net" in name and "ggmlc" in name:
+        return OpCode.GATED_DELTA_NET
     if name in ATEN_OP_MAP:
         return ATEN_OP_MAP[name]
     # Fallback to string name matching

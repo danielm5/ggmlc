@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
 from time import time
+
 import gguf
 import numpy as np
 import tensorflow as tf
@@ -32,9 +33,13 @@ def train(model_path):
     model = keras.Sequential(
         [
             keras.Input(shape=input_shape, dtype=tf.float32),
-            layers.Conv2D(8, kernel_size=(3, 3), padding="same", activation="relu", dtype=tf.float32),
+            layers.Conv2D(
+                8, kernel_size=(3, 3), padding="same", activation="relu", dtype=tf.float32
+            ),
             layers.MaxPooling2D(pool_size=(2, 2)),
-            layers.Conv2D(16, kernel_size=(3, 3), padding="same", activation="relu", dtype=tf.float32),
+            layers.Conv2D(
+                16, kernel_size=(3, 3), padding="same", activation="relu", dtype=tf.float32
+            ),
             layers.MaxPooling2D(pool_size=(2, 2)),
             layers.Flatten(),
             layers.Dense(num_classes, activation="softmax", dtype=tf.float32),
@@ -48,11 +53,11 @@ def train(model_path):
 
     t_start = time()
     model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs, validation_split=0.1)
-    print(f"Training took {time()-t_start:.2f}s")
+    print(f"Training took {time() - t_start:.2f}s")
 
     score = model.evaluate(x_test, y_test, verbose=0)
     print(f"Test loss: {score[0]:.6f}")
-    print(f"Test accuracy: {100*score[1]:.2f}%")
+    print(f"Test accuracy: {100 * score[1]:.2f}%")
 
     gguf_writer = gguf.GGUFWriter(model_path, "mnist-cnn")
 
@@ -72,7 +77,7 @@ def train(model_path):
 
     dense_weight = model.layers[-1].weights[0].numpy()
     dense_weight = dense_weight.transpose()
-    gguf_writer.add_tensor("dense.weight", dense_weight, raw_shape=(10, 7*7*16))
+    gguf_writer.add_tensor("dense.weight", dense_weight, raw_shape=(10, 7 * 7 * 16))
 
     dense_bias = model.layers[-1].weights[1].numpy()
     gguf_writer.add_tensor("dense.bias", dense_bias)
@@ -84,7 +89,7 @@ def train(model_path):
     print(f"GGUF model saved to '{model_path}'")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <model_path>")
         sys.exit(1)

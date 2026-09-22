@@ -81,6 +81,43 @@ def _torch_shape_to_shape(shape: Any) -> Shape:
     return Shape(dims)
 
 
+def _restore_symbolic_batch_dim(g: Graph) -> None:
+    """Copy a symbolic batch axis onto outputs that torch.export froze to the example B.
+
+    Only dim 0 is rewritten, only from same-rank activation/input sources, so
+    1-D ranges, weight ``[out, in]`` rows, and static splits like ``n_rep=2``
+    stay intact.
+    """
+    skip = {StorageClass.PARAMETER, StorageClass.CONSTANT}
+    changed = True
+    while changed:
+        changed = False
+        for op in g.nodes:
+            for oid in op.outputs:
+                out = g.tensors.get(oid)
+                if out is None or not out.shape.dims or out.storage in skip:
+                    continue
+                if not out.shape.dims[0].is_static():
+                    continue
+                rank = len(out.shape.dims)
+                sym0 = None
+                for iid in op.inputs:
+                    inp = g.tensors.get(iid)
+                    if inp is None or inp.storage in skip:
+                        continue
+                    if len(inp.shape.dims) != rank:
+                        continue
+                    if not inp.shape.dims[0].is_static():
+                        sym0 = inp.shape.dims[0]
+                        break
+                if sym0 is None:
+                    continue
+                out.shape = Shape([sym0] + list(out.shape.dims[1:]))
+                changed = True
+                if op.opcode in (OpCode.RESHAPE, OpCode.VIEW) and "shape" in op.attributes:
+                    op.attributes["shape"] = tuple(out.shape.dims)
+
+
 def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Graph:
     """Imports a torch.export.ExportedProgram into a ggmlc Canonical IR Graph."""
     g = Graph(name=graph_name)
@@ -605,7 +642,13 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
             for sfx in ("default", "Scalar", "Tensor")
         ):
             val = node.meta.get("val")
-            if val is not None and isinstance(val, torch.Tensor):
+            is_sym_zeros = (
+                val is not None
+                and isinstance(val, torch.Tensor)
+                and "zeros" in target_str
+                and any(isinstance(d, torch.SymInt) for d in val.shape)
+            )
+            if val is not None and isinstance(val, torch.Tensor) and not is_sym_zeros:
                 shape = _torch_shape_to_shape(val.shape)
                 dtype = DType.from_torch(val.dtype)
                 if "cumsum" in target_str:
@@ -756,6 +799,35 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
             input_tensor_ids.append(node_to_tensor[node.args[0]].id)
             dims = []
             if "unflatten" in target_str:
+                in_t = node_to_tensor[node.args[0]]
+                dim = int(node.args[1]) if len(node.args) > 1 else -1
+                sizes = node.args[2] if len(node.args) > 2 else ()
+                nd = list(in_t.shape.dims)
+                if dim < 0:
+                    dim += len(nd)
+                size_dims = []
+                for d in sizes:
+                    if isinstance(d, Node):
+                        size_dims.append(_symint_to_dim(d.meta.get("val")))
+                    else:
+                        size_dims.append(_symint_to_dim(d))
+                if 0 <= dim < len(nd):
+                    shape = Shape(nd[:dim] + size_dims + nd[dim + 1 :])
+                dims = list(shape.dims)
+            elif "flatten" in target_str:
+                in_t = node_to_tensor[node.args[0]]
+                start = int(node.args[1]) if len(node.args) > 1 else 0
+                end = int(node.args[2]) if len(node.args) > 2 else -1
+                nd = list(in_t.shape.dims)
+                n = len(nd)
+                if start < 0:
+                    start += n
+                if end < 0:
+                    end += n
+                mid: Dim = nd[start]
+                for d in nd[start + 1 : end + 1]:
+                    mid = mid * d
+                shape = Shape(nd[:start] + [mid] + nd[end + 1 :])
                 dims = list(shape.dims)
             elif len(node.args) > 1:
                 shape_arg = node.args[1]
@@ -857,6 +929,14 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
             )
             if scale is not None:
                 attributes["scale"] = float(scale)
+        elif opcode == OpCode.GATED_DELTA_NET:
+            for arg in node.args[:6]:
+                if isinstance(arg, Node) and arg in node_to_tensor:
+                    input_tensor_ids.append(node_to_tensor[arg].id)
+            attributes["K"] = int(node.kwargs.get("K", 1))
+            # torch.export often specialises custom-op outputs to the example batch.
+            if len(input_tensor_ids) >= 3:
+                shape = g.get_tensor(input_tensor_ids[2]).shape
         elif opcode == OpCode.CONTIGUOUS:
             input_tensor_ids.append(node_to_tensor[node.args[0]].id)
         elif opcode == OpCode.POW:
@@ -910,20 +990,22 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                     groups = node.args[8]
                 elif len(node.args) >= 7:
                     groups = node.args[6]
-            if groups is None:
-                in_t = node_to_tensor[node.args[0]]
-                w_t = node_to_tensor[node.args[1]]
-                if (
-                    len(in_t.shape.dims) == 4
-                    and len(w_t.shape.dims) == 4
-                    and in_t.shape.dims[1].is_static()
-                    and w_t.shape.dims[1].is_static()
-                ):
-                    ic_val = in_t.shape.dims[1].evaluate({})
-                    w_ic_val = w_t.shape.dims[1].evaluate({})
-                    if ic_val > 1 and w_ic_val == 1:
-                        groups = int(ic_val)
-            if "conv1d" in target_str:
+            in_t = node_to_tensor[node.args[0]]
+            w_t = node_to_tensor[node.args[1]]
+            if (
+                groups is None
+                and len(in_t.shape.dims) == 4
+                and len(w_t.shape.dims) == 4
+                and in_t.shape.dims[1].is_static()
+                and w_t.shape.dims[1].is_static()
+            ):
+                ic_val = in_t.shape.dims[1].evaluate({})
+                w_ic_val = w_t.shape.dims[1].evaluate({})
+                if ic_val > 1 and w_ic_val == 1:
+                    groups = int(ic_val)
+            # nn.Conv1d exports as aten.convolution.default (no "conv1d" in the target).
+            is_1d = "conv1d" in target_str or len(in_t.shape.dims) == 3 or len(w_t.shape.dims) == 3
+            if is_1d:
                 attributes["stride_w"] = (
                     int(stride[0]) if isinstance(stride, (list, tuple)) else int(stride)
                 )
@@ -1432,6 +1514,17 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
             else:
                 attributes[k] = v
 
+        # Prefer input-derived shapes over torch.export example specialisation
+        # (custom ops / unflatten often freeze batch to the example value).
+        if opcode == OpCode.LINEAR and len(input_tensor_ids) >= 1:
+            in_t = g.get_tensor(input_tensor_ids[0])
+            if in_t.shape.dims and shape.dims and len(shape.dims) == len(in_t.shape.dims):
+                new_dims = list(shape.dims)
+                for i, (src, dst) in enumerate(zip(in_t.shape.dims[:-1], shape.dims[:-1])):
+                    if (not src.is_static()) and dst.is_static():
+                        new_dims[i] = src
+                shape = Shape(new_dims)
+
         # Add output tensor
         out_t = g.add_tensor(
             name=node.name,
@@ -1463,5 +1556,6 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                     t.storage = StorageClass.OUTPUT
                     g.outputs.append(t.id)
 
+    _restore_symbolic_batch_dim(g)
     g.validate_invariants()
     return g

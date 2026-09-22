@@ -88,11 +88,7 @@ tokenizer = AutoTokenizer.from_pretrained("gpt2")
 generator = GGMLCGenerator(model, tokenizer, model_name="gpt2")
 
 # Generate text
-output_text = generator.generate(
-    prompt="The capital of France is",
-    max_new_tokens=16,
-    greedy=True
-)
+output_text = generator.generate(prompt="The capital of France is", max_new_tokens=16, greedy=True)
 print("Generated:", output_text)
 ```
 

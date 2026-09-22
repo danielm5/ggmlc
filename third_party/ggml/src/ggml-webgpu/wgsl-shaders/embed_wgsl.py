@@ -1,6 +1,6 @@
+import argparse
 import os
 import re
-import argparse
 
 
 def expand_includes(shader, input_dir):
@@ -31,7 +31,7 @@ def chunk_shader(shader_code, max_chunk_len=60000):
 def raw_delim(shader_code):
     """Pick a raw-string delimiter that does not appear in the shader."""
     delim = "wgsl"
-    while f"){delim}\"" in shader_code:
+    while f'){delim}"' in shader_code:
         delim += "_x"
     return delim
 
@@ -51,18 +51,20 @@ def write_shader(shader_name, shader_code, output_dir, outfile, input_dir):
         outfile.write(f'const char* wgsl_{shader_name} = R"{delim}({shader_code}){delim}";\n\n')
     else:
         for idx, chunk in enumerate(chunks):
-            outfile.write(f'static const char wgsl_{shader_name}_part{idx}[] = R"{delim}({chunk}){delim}";\n\n')
-        outfile.write(f'static const std::string& wgsl_{shader_name}_str() {{\n')
-        outfile.write('    static const std::string s = []{\n')
-        outfile.write('        std::string tmp;\n')
-        outfile.write(f'        tmp.reserve({len(shader_code)});\n')
+            outfile.write(
+                f'static const char wgsl_{shader_name}_part{idx}[] = R"{delim}({chunk}){delim}";\n\n'
+            )
+        outfile.write(f"static const std::string& wgsl_{shader_name}_str() {{\n")
+        outfile.write("    static const std::string s = []{\n")
+        outfile.write("        std::string tmp;\n")
+        outfile.write(f"        tmp.reserve({len(shader_code)});\n")
         for idx in range(len(chunks)):
-            outfile.write(f'        tmp.append(wgsl_{shader_name}_part{idx});\n')
-        outfile.write('        return tmp;\n')
-        outfile.write('    }();\n')
-        outfile.write('    return s;\n')
-        outfile.write('}\n')
-        outfile.write(f'const char* wgsl_{shader_name} = wgsl_{shader_name}_str().c_str();\n\n')
+            outfile.write(f"        tmp.append(wgsl_{shader_name}_part{idx});\n")
+        outfile.write("        return tmp;\n")
+        outfile.write("    }();\n")
+        outfile.write("    return s;\n")
+        outfile.write("}\n")
+        outfile.write(f"const char* wgsl_{shader_name} = wgsl_{shader_name}_str().c_str();\n\n")
 
 
 def main():

@@ -25,6 +25,7 @@ from ggmlc.ir.shape import (
     SymbolDim,
 )
 from ggmlc.ir.tensor import StorageClass
+from ggmlc.serialization.spill import SpilledBytes
 
 GGUF_MAGIC = b"GGUF"
 GGUF_VERSION = 3
@@ -346,8 +347,13 @@ class GGUFWriter:
                 out.write(b"\x00" * gap)
                 bytes_written += gap
 
-            out.write(t["data"])
-            bytes_written += len(t["data"])
+            payload = t["data"]
+            nbytes = len(payload)
+            if hasattr(payload, "write_to"):
+                payload.write_to(out)
+            else:
+                out.write(payload)
+            bytes_written += nbytes
             t["data"] = b""  # Free buffer memory as it is streamed to disk
 
             if bytes_written % self.alignment != 0:
@@ -442,7 +448,7 @@ def _build_gguf_writer(
 
                 # GGUF tensor shape must match the concrete serialized data shape
                 static_shape = list(arr.shape[::-1]) if arr.ndim > 0 else [1]
-            elif isinstance(t.data, bytes):
+            elif isinstance(t.data, (bytes, SpilledBytes)):
                 raw_bytes = t.data
                 static_shape = []
                 for d in getattr(t, "ne", ()):

@@ -4,6 +4,10 @@ A zero-dependency C++ implementation of **Laya**, the open reproduction of TypeS
 
 The neural trunk is a GGUF compiled with `ggmlc`. Sequence construction, temperatures, Shannon confidence, language routing, JSON-RPC, and the Web Studio live in C++.
 
+**Preprocessing is GGUF-defined** (`ggmlc.decision`, the System One analogue of `tokenizer.chat_template`). New architectures (Kev, …) must bake tokenizer + sequence program + postprocess knobs at compile time. The runner does not switch on model family.
+
+Already-distributed Laya GGUFs (english / multilingual / typed-decisions) predate that key. If `ggmlc.decision` is missing, `laya.exe` **assumes the built-in Laya preprocessor** so existing downloads keep working. Do not ship any non-Laya GGUF without `ggmlc.decision`.
+
 Checkpoints (same contract, different encoder / context):
 
 | Family | Hugging Face | Encoder | Params | Context | Use it for |
@@ -25,6 +29,9 @@ Pre-compiled GGUFs (F16, Q8_0, UD_Q4_K_M) are published under:
 - English: [mys/laya-GGUF](https://huggingface.co/mys/laya-GGUF)
 - Multilingual: [mys/laya-multilingual-GGUF](https://huggingface.co/mys/laya-multilingual-GGUF)
 - Typed-decisions: [mys/laya-typed-decisions-GGUF](https://huggingface.co/mys/laya-typed-decisions-GGUF)
+- Kev 0.5B (Qwen2.5): [mys/kev-0.5b-GGUF](https://huggingface.co/mys/kev-0.5b-GGUF)
+- Kev 0.8B (Qwen3.5 Gated DeltaNet): [mys/kev-0.8b-GGUF](https://huggingface.co/mys/kev-0.8b-GGUF)
+- Kev 4B (Qwen3.5 Gated DeltaNet): [mys/kev-4b-GGUF](https://huggingface.co/mys/kev-4b-GGUF)
 
 ```powershell
 # huggingface-cli download mys/laya-GGUF laya_english_f16.gguf --local-dir scratch
@@ -170,7 +177,7 @@ with TypeSafeClient(api_key="local", base_url="http://127.0.0.1:8080") as client
 
 Jev/Laya exist for **short decision latency**, not frontier generation. One typed question is one encoder forward. `bench` reports wall clock, live pad length `S`, batch `B`, forwards, and questions/s after warmup.
 
-**Hardware (2026-09-20):** NVIDIA GeForce RTX 4050 Laptop GPU 6 GB (CC 8.9), Windows, English F16 GGUF ~847 MB. Dynamic `b`/`s`, pad to `max(len_i)` in the chunk (Python `collate_items`), CUDA batch cap `B·S ≤ 1024`, `ggml_gallocr` arena reuse on. C++ warmup 5 / runs 7. Python `laya.Agent` collates questions to the live max length and runs one SDPA forward — it does not concat-pack sequences.
+**Hardware (2026-09-20):** NVIDIA GeForce RTX 4050 Laptop GPU 6 GB (CC 8.9), Windows, English F16 GGUF ~847 MB. Dynamic `b`/`s`, pad to `max(len_i)` across the request (Python `collate_items`), CUDA token budget `B·S ≤ 8192` then OOM-halve, `ggml_gallocr` arena reuse on. C++ warmup 5 / runs 7. Python `laya.Agent` collates questions to the live max length and runs one SDPA forward — it does not concat-pack sequences. A 2026-09-22 remeasure of the English email preset was **147 ms** p50 (still one `B=7, S=124` forward).
 
 | Path | Shape | Single noul (p50) | Email 7-question wall (p50) | Throughput |
 | :--- | :--- | :---: | :---: | :--- |
@@ -183,6 +190,28 @@ Previous static `[1, 512]` C++ path was **234 ms**/noul and **1.45 s** for the e
 
 ```powershell
 laya bench scratch\laya_english_f16.gguf --preset email --device auto --cuda-graph --warmup 5 --runs 7
+```
+
+### Kev 0.5B and 0.8B
+
+Same email preset and the same wall-clock measurement (`laya.exe bench` vs official `kev` `DecisionModel.forward`, merged LoRA, fp32, one CUDA forward). GGUFs are F16. Qwen3.5 PyTorch on this machine uses the reference Gated DeltaNet (`flash-linear-attention` is not installed); ggmlc lowers that op to `GGML_OP_GATED_DELTA_NET`.
+
+**Hardware (2026-09-22):** same RTX 4050 Laptop. Every row is one forward.
+
+| Model | Path | Single noul (p50) | Email 7-question wall (p50) | Shape |
+| :--- | :--- | :---: | :---: | :--- |
+| **Kev 0.5B** | **`laya.exe` CUDA + graph** | **17.9 ms** (best 17.5) | **101.5 ms** (best 97.9) | S=68 B=1 / S=122 B=7 |
+| Kev 0.5B | PyTorch fp32 | 75.1 ms (best 43.5) | 109.4 ms (best 105.9) | one padded batch |
+| **Kev 0.8B** | **`laya.exe` CUDA + graph** | **69.4 ms** (best 67.6) | **464.6 ms** (best 450.9) | S=176 B=1 / S=316 B=7 |
+| Kev 0.8B | PyTorch fp32 | 114.3 ms (best 97.5) | 494.2 ms (best 460.2) | one padded batch |
+
+Splitting the 0.8B email by length bucket was three weight reads (**~927 ms**). One pad-to-max batch (`B=7, S=316`) is what matches PyTorch.
+
+```powershell
+.\build-win-cuda\examples\laya\laya.exe bench scratch\kev_0.5b_f16.gguf --preset email --device cuda --cuda-graph --warmup 3 --runs 5
+.\build-win-cuda\examples\laya\laya.exe bench scratch\kev_0.8b_f16.gguf --preset email --device cuda --cuda-graph --warmup 5 --runs 7
+.\.venv\Scripts\python.exe scratch\bench_kev.py --repo jaredpalmer/kev-0.5b --device cuda --dtype fp32
+.\.venv\Scripts\python.exe scratch\bench_kev.py --repo jaredpalmer/kev-0.8b --device cuda --dtype fp32
 ```
 
 ---
@@ -199,6 +228,10 @@ TypeSafe SDK smoke (server must already be listening):
 .\build-win-cuda\examples\laya\laya.exe serve scratch\laya_english_f16.gguf --port 18080 --device auto --cuda-graph
 uv pip install typesafe-sdk
 .venv\Scripts\python.exe scratch\test_laya_typesafe_sdk.py --base-url http://127.0.0.1:18080
+
+# Same suite against a Kev GGUF (TypeSafe `model` must match GET /v1/models):
+.\build-win-cuda\examples\laya\laya.exe serve scratch\kev_0.8b_f16.gguf --port 18081 --device auto --cuda-graph
+.venv\Scripts\python.exe scratch\test_laya_typesafe_sdk.py --base-url http://127.0.0.1:18081 --model kev-0.8b
 ```
 
 - Differential: live `laya.Agent` vs `LayaCleanTrunk` vs `scratch/laya_english_f16.gguf` (and other GGUFs when present).
@@ -225,11 +258,28 @@ uv pip install laya
 
 # Or everything the script knows about at one quant
 .\.venv\Scripts\python.exe examples\laya\compile_laya.py --family all --quantize q8_0
+
+# Kev-0.5B (Qwen2.5) and Kev-0.8B (Qwen3.5 hybrid Gated DeltaNet).
+# LoRA is merged into the base weights in fp32 before export. Adapters are refused.
+uv pip install "kev @ git+https://github.com/jaredpalmer/kev.git"
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.5b --quantize f16
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.5b --quantize q8_0
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.5b --quantize ud_q4_k_m
+
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.8b --quantize f16
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.8b --quantize q8_0
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.8b --quantize ud_q4_k_m
+
+# Larger Qwen3.5 hybrids. Same flags.
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 4b --quantize f16 --device cpu
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 4b --quantize q8_0 --device cpu
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 4b --quantize ud_q4_k_m --device cpu
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 9b --quantize f16 --device cpu
 ```
 
-Outputs land in `scratch/laya_{family}_{quant}.gguf`. RoPE fusion is **disabled**: Laya uses two precomputed thetas (full 160000, sliding 10000). Folding that pattern into `GGML_OP_ROPE` is incorrect.
+Outputs land in `scratch/laya_{family}_{quant}.gguf` or `scratch/kev_{size}_{quant}.gguf`. Laya RoPE fusion is **disabled**: Laya uses two precomputed thetas (full 160000, sliding 10000). Folding that pattern into `GGML_OP_ROPE` is incorrect. Kev compile also leaves `enable_rope` off (Qwen3.5 uses partial rotary). Qwen3.5 zero-centered RMS (`rms(x) * (1 + weight)`) is fused to `RMS_NORM`, and the gamma is baked into a following linear when that linear is the only consumer. Already-published Laya GGUFs without `ggmlc.decision` still run: the C++ binary falls back to the original Laya encoder.
 
-Dynamic export: batch `b ∈ [1, 8]`, sequence `s ∈ [64, max_len]` (`max_len` is 512 for English and 1024 for the other two). Runtime matches Python `collate_items`: pad to `max(len_i)` in the chunk. CUDA keeps `B·S ≤ 1024` on a 6 GB laptop (arena reuse is on).
+Dynamic export: batch `b ∈ [1, 8]`, sequence `s ∈ [64, max_len]` (`max_len` is 512 for English, 1024 for the other Laya families, 2048 for Kev). Runtime matches Python `collate_items`: one batch padded to `max(len_i)`. CUDA keeps `B·S ≤ 8192`, then halves `B` on OOM (arena reuse is on).
 
 ---
 

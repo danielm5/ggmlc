@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 
 import numpy as np
@@ -13,6 +15,30 @@ from ggmlc.ir.op import OpCode, Operation
 from ggmlc.ir.shape import Shape, StaticDim
 from ggmlc.ir.tensor import StorageClass
 from ggmlc.transforms.base import GraphTransformResult, Pass, PassStats
+
+
+def _concatenate_rows(parts: list[np.ndarray]) -> np.ndarray:
+    """Stack weight rows. Fall back to a file-backed buffer when RAM is tight."""
+    try:
+        return np.ascontiguousarray(np.concatenate(parts, axis=0))
+    except MemoryError:
+        rows = sum(int(part.shape[0]) for part in parts)
+        cols = int(parts[0].shape[1])
+        fd, name = tempfile.mkstemp(prefix="ggmlc-fuse-", suffix=".bin")
+        os.close(fd)
+        from pathlib import Path
+
+        from ggmlc.frontend.pytorch.exporter import _RELEASED_FILES
+
+        _RELEASED_FILES.append(Path(name))
+        fused = np.memmap(name, dtype=parts[0].dtype, mode="w+", shape=(rows, cols))
+        offset = 0
+        for part in parts:
+            n = int(part.shape[0])
+            fused[offset : offset + n] = part
+            offset += n
+        fused.flush()
+        return fused
 
 
 @dataclass
@@ -538,8 +564,68 @@ def _fuse_layer_norm_patterns(graph: Graph) -> None:
     graph.nodes = [n for n in new_nodes if n.id not in ops_to_remove]
 
 
+def _rsqrt_mul_parts(
+    mul_op: Operation, producer_map: dict[int, Operation]
+) -> tuple[Operation, int] | None:
+    """Return ``(rsqrt_op, x_id)`` when ``mul_op`` is ``x * rsqrt`` or ``rsqrt * x``."""
+    if len(mul_op.inputs) != 2:
+        return None
+    for rstd_idx, x_idx in ((0, 1), (1, 0)):
+        prod = producer_map.get(mul_op.inputs[rstd_idx])
+        if prod is not None and prod.opcode == OpCode.RSQRT:
+            return prod, mul_op.inputs[x_idx]
+    return None
+
+
+def _materialize_one_plus_weight(
+    graph: Graph, scale_id: int, producer_map: dict[int, Operation]
+) -> int | None:
+    """Fold Qwen3-style ``gamma = 1 + weight`` into a 1D parameter.
+
+    ``Qwen3_5RMSNorm`` is ``rms(x) * (1 + w)`` with ``w`` initialized at 0.
+    The ``+ 1`` is an ADD of a parameter and a constant ones tensor, so the
+    plain "gamma is a parameter" matcher misses it.
+    """
+    prod = producer_map.get(scale_id)
+    if prod is None or prod.opcode != OpCode.ADD or len(prod.inputs) != 2:
+        return None
+    weight = None
+    ones = None
+    for tid in prod.inputs:
+        t = graph.get_tensor(tid)
+        if t is None or t.data is None:
+            return None
+        if t.storage == StorageClass.PARAMETER:
+            weight = t
+        elif t.storage == StorageClass.CONSTANT:
+            ones = t
+        else:
+            return None
+    if weight is None or ones is None:
+        return None
+    ones_arr = np.asarray(ones.data, dtype=np.float32).reshape(-1)
+    if ones_arr.size == 0 or not np.allclose(ones_arr, 1.0):
+        return None
+    gamma = np.asarray(weight.data, dtype=np.float32).reshape(-1) + ones_arr
+    gamma = np.ascontiguousarray(gamma.reshape(-1).astype(np.float32))
+    gamma_t = graph.add_tensor(
+        name=f"{weight.name}_one_plus",
+        shape=Shape([int(gamma.size)]),
+        dtype=DType.F32,
+        storage=StorageClass.PARAMETER,
+        data=gamma,
+    )
+    if gamma_t.id not in graph.parameters:
+        graph.parameters.append(gamma_t.id)
+    return gamma_t.id
+
+
 def _fuse_rms_norm_patterns(graph: Graph) -> None:
-    """Matches decomposed RMSNorm subgraphs (e.g. from JAX/XLA) and fuses into RMS_NORM."""
+    """Matches decomposed RMSNorm subgraphs (e.g. from JAX/XLA) and fuses into RMS_NORM.
+
+    Also matches Qwen3 zero-centered RMS, ``rms(x) * (1 + weight)``, by baking
+    the ``+ 1`` into the gamma parameter before fusion.
+    """
     producer_map: dict[int, Operation] = {}
     consumer_counts: dict[int, int] = {}
     for op in graph.nodes:
@@ -560,42 +646,31 @@ def _fuse_rms_norm_patterns(graph: Graph) -> None:
             prod0 = producer_map.get(in0)
             prod1 = producer_map.get(in1)
 
-            # RMSNorm output is MUL(MUL(x, rstd), gamma) or MUL(x, MUL(rstd, gamma))
+            # RMSNorm output is MUL(MUL(x, rstd), gamma). Gamma is a parameter,
+            # or Qwen3 zero-centered ``ADD(weight, 1)``.
             rstd_op = None
             x_id = None
             gamma_id = None
 
+            normed = None
+            scale_id = None
             if prod0 and prod0.opcode == OpCode.MUL:
-                # in0 is MUL(x, rstd) or MUL(rstd, gamma)
-                gamma_cand = graph.get_tensor(in1)
-                if gamma_cand and gamma_cand.storage in (
-                    StorageClass.PARAMETER,
-                    StorageClass.CONSTANT,
-                ):
-                    gamma_id = in1
-                    sub_prod0 = producer_map.get(prod0.inputs[0])
-                    sub_prod1 = producer_map.get(prod0.inputs[1])
-                    if sub_prod0 and sub_prod0.opcode == OpCode.RSQRT:
-                        rstd_op = sub_prod0
-                        x_id = prod0.inputs[1]
-                    elif sub_prod1 and sub_prod1.opcode == OpCode.RSQRT:
-                        rstd_op = sub_prod1
-                        x_id = prod0.inputs[0]
+                normed, scale_id = prod0, in1
             elif prod1 and prod1.opcode == OpCode.MUL:
-                gamma_cand = graph.get_tensor(in0)
-                if gamma_cand and gamma_cand.storage in (
-                    StorageClass.PARAMETER,
-                    StorageClass.CONSTANT,
-                ):
-                    gamma_id = in0
-                    sub_prod0 = producer_map.get(prod1.inputs[0])
-                    sub_prod1 = producer_map.get(prod1.inputs[1])
-                    if sub_prod0 and sub_prod0.opcode == OpCode.RSQRT:
-                        rstd_op = sub_prod0
-                        x_id = prod1.inputs[1]
-                    elif sub_prod1 and sub_prod1.opcode == OpCode.RSQRT:
-                        rstd_op = sub_prod1
-                        x_id = prod1.inputs[0]
+                normed, scale_id = prod1, in0
+
+            if normed is not None and scale_id is not None:
+                parts = _rsqrt_mul_parts(normed, producer_map)
+                scale_t = graph.get_tensor(scale_id)
+                if parts is not None and scale_t is not None:
+                    if scale_t.storage in (StorageClass.PARAMETER, StorageClass.CONSTANT):
+                        rstd_op, x_id = parts
+                        gamma_id = scale_id
+                    else:
+                        folded = _materialize_one_plus_weight(graph, scale_id, producer_map)
+                        if folded is not None:
+                            rstd_op, x_id = parts
+                            gamma_id = folded
 
             if rstd_op is not None and x_id is not None and gamma_id is not None:
                 # Ensure tensor is 1D, 2D, 3D, or 4D where innermost dimension is ne0
@@ -1191,7 +1266,7 @@ def _fuse_horizontal_linear_patterns(graph: Graph, options: FusionOptions) -> No
         out_dims = [int(w.data.shape[0]) for w in weights]
 
         # 1. Concatenate weights along dimension 0 (out_features)
-        fused_w_data = np.ascontiguousarray(np.concatenate([w.data for w in weights], axis=0))
+        fused_w_data = _concatenate_rows([w.data for w in weights])
         total_out_dim = int(fused_w_data.shape[0])
         fused_w_shape = Shape([StaticDim(total_out_dim), StaticDim(d_in)])
         fused_w_name = weights[0].name

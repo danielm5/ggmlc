@@ -66,6 +66,8 @@ def compile(
         >>> model_path = ggmlc.compile(model, (x,), output="resnet18.gguf")
         >>> runner = ggmlc.load(model_path)
     """
+    release_module_storage = bool(kwargs.pop("release_module_storage", False))
+
     # Normalize fusion_options before export so the PyTorch exporter does not
     # bake in default horizontal fusion that later A/B flags cannot undo.
     from ggmlc.transforms.fusion import FusionOptions as _FusionOptions
@@ -98,6 +100,7 @@ def compile(
             model_name=model_name,
             enable_fusion=enable_fusion,
             fusion_options=fusion_options,
+            release_module_storage=release_module_storage,
         )
         canonical_graph = exported.main_graph
     elif callable(model) and not hasattr(model, "parameters"):  # JAX function or callable
@@ -125,6 +128,7 @@ def compile(
             model_name=model_name,
             enable_fusion=enable_fusion,
             fusion_options=fusion_options,
+            release_module_storage=release_module_storage,
         )
         canonical_graph = exported.main_graph
 
@@ -147,6 +151,12 @@ def compile(
 
     # 4. Apply Block Quantization (Optional)
     if quantize is not None:
+        if release_module_storage:
+            import gc
+
+            for tensor in canonical_graph.tensors.values():
+                tensor.data = None
+            gc.collect()
         ggml_graph, _ = quantize_graph_parameters(ggml_graph, target_dtype=quantize)
 
     # 5. Extract metadata from pipeline and tasks if provided
@@ -170,6 +180,19 @@ def compile(
 
     if output is not None:
         out_path = save_to_gguf(ggml_graph, output, extra_metadata=combined_metadata)
+        if release_module_storage and not return_runner:
+            import gc
+
+            from ggmlc.frontend.pytorch.exporter import cleanup_released_storage
+            from ggmlc.serialization.spill import cleanup_spills
+
+            for graph in (canonical_graph, ggml_graph):
+                for tensor in getattr(graph, "tensors", {}).values():
+                    tensor.data = None
+            del canonical_graph, ggml_graph
+            gc.collect()
+            cleanup_released_storage()
+            cleanup_spills()
         if return_runner:
             return load(out_path, n_threads=n_threads, device=device)
         return out_path

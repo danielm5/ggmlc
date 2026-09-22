@@ -1,5 +1,6 @@
 """Pipeline subsystem for ggmlc."""
 
+from ggmlc.pipeline.decision import DecisionPipelineSpec
 from ggmlc.pipeline.huggingface import (
     from_huggingface,
     from_huggingface_image_processor,
@@ -18,6 +19,7 @@ from ggmlc.pipeline.vision import VisionPreprocessor
 
 __all__ = [
     "BPETokenizer",
+    "DecisionPipelineSpec",
     "Pipeline",
     "PipelineSpec",
     "PostprocessSpec",

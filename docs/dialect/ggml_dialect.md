@@ -40,6 +40,7 @@ class GGMLTensorDef:
     data: np.ndarray | None = None
     role: str | None = None
 
+
 @dataclass
 class GGMLOpDef:
     id: int
@@ -48,6 +49,7 @@ class GGMLOpDef:
     outputs: list[int]
     attributes: dict[str, Any] = field(default_factory=dict)
     name: str | None = None
+
 
 @dataclass
 class GGMLExecutionGraph:
