@@ -889,7 +889,8 @@ int main(int argc, char** argv) {
         if (use_cuda_graph) {
             executor.set_enable_cuda_graph(true);
         }
-        executor.set_logits_last_only(true);
+        // Raw one-shot execution returns the full graph output. Last-token
+        // gather is only for chat / prompt / serve sampling.
         executor.prepare(symbol_env, !unplanned);
 
         // Load initial state data if provided

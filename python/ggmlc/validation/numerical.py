@@ -175,10 +175,10 @@ def run_compiled_model_wsl(
                 "wsl",
                 "bash",
                 "-c",
-                f"{wsl_exe} {target_model} {' '.join(all_args)}",
+                f"{wsl_exe} run {target_model} {' '.join(all_args)}",
             ]
         else:
-            cmd = [str(exe_path), target_model] + all_args
+            cmd = [str(exe_path), "run", target_model] + all_args
 
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if res.returncode != 0:
