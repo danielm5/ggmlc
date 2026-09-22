@@ -236,6 +236,7 @@ def compile_one(
         extra_metadata=extra,
         fusion_options=fusion,
         dynamic_shapes=dynamic_shapes,
+        release_module_storage=True,
     )
     print("wrote", output, "bytes", output.stat().st_size)
     del ck, model, trunk

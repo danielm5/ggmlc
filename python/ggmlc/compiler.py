@@ -66,6 +66,8 @@ def compile(
         >>> model_path = ggmlc.compile(model, (x,), output="resnet18.gguf")
         >>> runner = ggmlc.load(model_path)
     """
+    release_module_storage = bool(kwargs.pop("release_module_storage", False))
+
     # Normalize fusion_options before export so the PyTorch exporter does not
     # bake in default horizontal fusion that later A/B flags cannot undo.
     from ggmlc.transforms.fusion import FusionOptions as _FusionOptions
@@ -98,6 +100,7 @@ def compile(
             model_name=model_name,
             enable_fusion=enable_fusion,
             fusion_options=fusion_options,
+            release_module_storage=release_module_storage,
         )
         canonical_graph = exported.main_graph
     elif callable(model) and not hasattr(model, "parameters"):  # JAX function or callable
@@ -125,6 +128,7 @@ def compile(
             model_name=model_name,
             enable_fusion=enable_fusion,
             fusion_options=fusion_options,
+            release_module_storage=release_module_storage,
         )
         canonical_graph = exported.main_graph
 
