@@ -36,6 +36,17 @@ def export_torch_model(
         dynamic_shapes=dynamic_shapes,
     )
     g = import_exported_program(ep, graph_name="main")
+    # The IR already owns its arrays. Drop the exported program and the live
+    # parameter storage so fusion can allocate without a second full copy.
+    del ep
+    for param in model.parameters():
+        param.data = torch.empty(0, dtype=param.dtype, device="cpu")
+    for buf in model.buffers():
+        if buf.numel() > 4096:
+            buf.data = torch.empty(0, dtype=buf.dtype, device="cpu")
+    import gc
+
+    gc.collect()
     if optimize:
         pipeline = create_standard_optimization_pipeline(
             enable_fusion=enable_fusion, options=fusion_options
