@@ -57,6 +57,12 @@ CHECKPOINTS = {
         "model_name": "kev-4b",
         "arch": "qwen3.5",
     },
+    "9b": {
+        "repo": "jaredpalmer/kev-9b",
+        "stem": "kev_9b",
+        "model_name": "kev-9b",
+        "arch": "qwen3.5",
+    },
 }
 ALIASES = {
     "kev": "0.5b",
@@ -65,6 +71,9 @@ ALIASES = {
     "kev-0.8b": "0.8b",
     "0.8": "0.8b",
     "kev-4b": "4b",
+    "4": "4b",
+    "kev-9b": "9b",
+    "9": "9b",
 }
 QUANT_CHOICES = ["f32", "f16", "q8_0", "q4_0", "q4_k_m", "ud_q4_k_m"]
 
@@ -240,7 +249,7 @@ def main() -> None:
             "in fp32 before export (required; adapters are not serialized)."
         )
     )
-    parser.add_argument("--family", default="0.5b", help="0.5b | 0.8b | 4b")
+    parser.add_argument("--family", default="0.5b", help="0.5b | 0.8b | 4b | 9b")
     parser.add_argument(
         "--checkpoint", default=None, help="Alias for --family (HF repo or short name)"
     )

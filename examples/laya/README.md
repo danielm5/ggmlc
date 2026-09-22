@@ -256,19 +256,27 @@ uv pip install laya
 # Or everything the script knows about at one quant
 .\.venv\Scripts\python.exe examples\laya\compile_laya.py --family all --quantize q8_0
 
-# Kev-0.5B (Qwen2.5): merge rank-16 LoRA into the base weights in fp32, then compile.
-# Adapters are refused — the GGUF is a dense fused backbone + pointer head (~964 MB F16).
-# The compile writes ggmlc.decision (sequence + postprocess). Required for any non-Laya GGUF.
+# Kev-0.5B (Qwen2.5) and Kev-0.8B (Qwen3.5 hybrid Gated DeltaNet).
+# LoRA is merged into the base weights in fp32 before export. Adapters are refused.
 uv pip install "kev @ git+https://github.com/jaredpalmer/kev.git"
 .\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.5b --quantize f16
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.5b --quantize q8_0
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.5b --quantize ud_q4_k_m
 
-# Kev-0.8B (Qwen3.5 hybrid Gated DeltaNet). Same recipe key; larger download.
 .\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.8b --quantize f16
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.8b --quantize q8_0
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 0.8b --quantize ud_q4_k_m
+
+# Larger Qwen3.5 hybrids. Same flags.
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 4b --quantize f16 --device cpu
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 4b --quantize q8_0 --device cpu
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 4b --quantize ud_q4_k_m --device cpu
+.\.venv\Scripts\python.exe examples\laya\compile_kev.py --family 9b --quantize f16 --device cpu
 ```
 
-Outputs land in `scratch/laya_{family}_{quant}.gguf` or `scratch/kev_{size}_f16.gguf`. Laya RoPE fusion is **disabled**: Laya uses two precomputed thetas (full 160000, sliding 10000). Folding that pattern into `GGML_OP_ROPE` is incorrect. Kev compile also leaves `enable_rope` off (Qwen3.5 uses partial rotary). Already-published Laya GGUFs without `ggmlc.decision` still run: the C++ binary falls back to the original Laya encoder.
+Outputs land in `scratch/laya_{family}_{quant}.gguf` or `scratch/kev_{size}_{quant}.gguf`. Laya RoPE fusion is **disabled**: Laya uses two precomputed thetas (full 160000, sliding 10000). Folding that pattern into `GGML_OP_ROPE` is incorrect. Kev compile also leaves `enable_rope` off (Qwen3.5 uses partial rotary). Qwen3.5 zero-centered RMS (`rms(x) * (1 + weight)`) is fused to `RMS_NORM`, and the gamma is baked into a following linear when that linear is the only consumer. Already-published Laya GGUFs without `ggmlc.decision` still run: the C++ binary falls back to the original Laya encoder.
 
-Dynamic export: batch `b ∈ [1, 8]`, sequence `s ∈ [64, max_len]` (`max_len` is 512 for English, 1024 for the other Laya families, 2048 for Kev). Runtime matches Python `collate_items`: one batch padded to `max(len_i)`. CUDA keeps `B·S ≤ 8192` on a 6 GB laptop, then halves `B` on OOM (arena reuse is on).
+Dynamic export: batch `b ∈ [1, 8]`, sequence `s ∈ [64, max_len]` (`max_len` is 512 for English, 1024 for the other Laya families, 2048 for Kev). Runtime matches Python `collate_items`: one batch padded to `max(len_i)`. CUDA keeps `B·S ≤ 8192`, then halves `B` on OOM (arena reuse is on).
 
 ---
 
