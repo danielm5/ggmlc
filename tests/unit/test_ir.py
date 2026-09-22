@@ -48,3 +48,23 @@ def test_graph_construction_and_validation():
     model.add_graph(g)
     model.validate()
     assert len(model.main_graph.nodes) == 2
+
+
+def test_ggml_ne_folds_symbolic_outer_dims():
+    from ggmlc.dialect.ggml.lowering import canonical_shape_to_ggml_ne
+    from ggmlc.ir.shape import MulDim
+
+    batch = SymbolDim("b")
+    ne = canonical_shape_to_ggml_ne(
+        Shape([batch, StaticDim(2), StaticDim(3), StaticDim(4), StaticDim(5)])
+    )
+    assert ne[0] == StaticDim(5)
+    assert ne[1] == StaticDim(4)
+    assert ne[2] == StaticDim(3)
+    assert isinstance(ne[3], MulDim)
+    assert ne[3].evaluate({"b": 7}) == 14
+
+    static = canonical_shape_to_ggml_ne(
+        Shape([StaticDim(2), StaticDim(3), StaticDim(4), StaticDim(5), StaticDim(6)])
+    )
+    assert static == (StaticDim(6), StaticDim(5), StaticDim(4), StaticDim(6))

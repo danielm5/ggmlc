@@ -9,7 +9,7 @@ from ggmlc.dialect.ggml.ops import GGMLOpCode, GGMLType, GGMLUnaryOpCode
 from ggmlc.ir.dtype import DType
 from ggmlc.ir.graph import Graph
 from ggmlc.ir.op import OpCode, Operation
-from ggmlc.ir.shape import Dim, Shape, StaticDim
+from ggmlc.ir.shape import Dim, MulDim, Shape, StaticDim
 from ggmlc.ir.tensor import StorageClass
 from ggmlc.transforms.fusion import FusionOptions, fuse_operations
 
@@ -48,13 +48,15 @@ def canonical_shape_to_ggml_ne(shape: Shape) -> tuple[Dim, Dim, Dim, Dim]:
     elif len(dims) == 4:
         return (dims[3], dims[2], dims[1], dims[0])
     else:
-        outer_val = 1
+        outer: Dim = StaticDim(1)
         for d in dims[:-3]:
-            if isinstance(d, StaticDim):
-                outer_val *= d.value
+            if isinstance(outer, StaticDim) and isinstance(d, StaticDim):
+                outer = StaticDim(outer.value * d.value)
+            elif isinstance(outer, StaticDim) and outer.value == 1:
+                outer = d
             else:
-                outer_val *= int(d)
-        return (dims[-1], dims[-2], dims[-3], StaticDim(outer_val))
+                outer = MulDim(outer, d)
+        return (dims[-1], dims[-2], dims[-3], outer)
 
 
 @dataclass

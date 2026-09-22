@@ -174,3 +174,27 @@ def test_quantized_model_e2e_cosine_similarity():
     cos_q4 = cosine_similarity(ref_out, out_q4)
     assert cos_q4 > 0.98
     assert stats_q4["compression_ratio"] > 6.0
+
+
+def test_spilled_payload_matches_in_memory_quant():
+    import io
+
+    from ggmlc.serialization.spill import cleanup_spills, payload_from_float32
+
+    data = np.random.default_rng(0).standard_normal((1024, 1024)).astype(np.float32)
+    spilled = payload_from_float32(data, "f16", spill_min=1)
+    buf = io.BytesIO()
+    spilled.write_to(buf)
+    assert buf.getvalue() == np.ascontiguousarray(data, dtype=np.float16).tobytes()
+
+    spilled_q8 = payload_from_float32(data, "q8_0", spill_min=1)
+    buf = io.BytesIO()
+    spilled_q8.write_to(buf)
+    assert buf.getvalue() == quantize_q8_0(data)
+
+    transposed = np.ascontiguousarray(data.T)
+    spilled_t = payload_from_float32(data.T, "q4_0", spill_min=1)
+    buf = io.BytesIO()
+    spilled_t.write_to(buf)
+    assert buf.getvalue() == quantize_q4_0(transposed)
+    cleanup_spills()

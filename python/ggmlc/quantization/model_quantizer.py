@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import gc
+
 import numpy as np
 
 from ggmlc.ir.dtype import DType
 from ggmlc.ir.graph import Graph
 from ggmlc.ir.tensor import StorageClass, Tensor
 from ggmlc.quantization.policies import QuantizationPolicy, get_quantization_policy
-from ggmlc.quantization.quantize import quantize_q4_0, quantize_q8_0
 from ggmlc.quantization.roles import classify_tensor_role
+from ggmlc.serialization.spill import payload_from_float32
 
 
 def quantize_graph_parameters(
@@ -95,7 +97,14 @@ def quantize_graph_parameters(
             and is_multi_d
             and resolved_dtype != DType.F32
         ):
-            arr = np.array(tensor.data, dtype=np.float32)
+            raw = tensor.data
+            if isinstance(raw, np.ndarray) and raw.dtype == np.float32:
+                arr = raw
+            else:
+                arr = np.asarray(raw, dtype=np.float32)
+            release_src = int(arr.nbytes) >= (1 << 20)
+            if release_src:
+                tensor.data = None
             row_size = (
                 dims[0] if isinstance(graph, GGMLExecutionGraph) else (dims[-1] if dims else 1)
             )
@@ -113,25 +122,26 @@ def quantize_graph_parameters(
                 actual_dtype = DType.F16
 
             orig_tensor_bytes = arr.nbytes
-            q_bytes: bytes
-
             if actual_dtype == DType.Q4_0:
-                q_bytes = quantize_q4_0(arr)
+                q_bytes = payload_from_float32(arr, "q4_0")
                 target_ggml_type = GGMLType.GGML_TYPE_Q4_0
             elif actual_dtype == DType.Q8_0:
-                q_bytes = quantize_q8_0(arr)
+                q_bytes = payload_from_float32(arr, "q8_0")
                 target_ggml_type = GGMLType.GGML_TYPE_Q8_0
             elif actual_dtype in (DType.F16, DType.BF16):
-                q_bytes = arr.astype(np.float16).tobytes()
+                q_bytes = payload_from_float32(arr, "f16")
                 target_ggml_type = GGMLType.GGML_TYPE_F16
             else:
-                q_bytes = arr.tobytes()
+                q_bytes = payload_from_float32(arr, "f32")
                 target_ggml_type = GGMLType.GGML_TYPE_F32
 
             orig_bytes += orig_tensor_bytes
             quant_bytes += len(q_bytes)
             tensors_quantized += 1
             del arr
+            if release_src:
+                del raw
+                gc.collect()
             type_name = actual_dtype.name
             type_counts[type_name] = type_counts.get(type_name, 0) + 1
 
@@ -160,13 +170,14 @@ def quantize_graph_parameters(
         new_graph.tensors[tid] = tensor
         type_counts["F32"] = type_counts.get("F32", 0) + 1
         if tensor.data is not None:
-            if isinstance(tensor.data, bytes):
-                orig_bytes += len(tensor.data)
-                quant_bytes += len(tensor.data)
+            if isinstance(tensor.data, (bytes, bytearray)):
+                nb = len(tensor.data)
+            elif hasattr(tensor.data, "nbytes"):
+                nb = int(tensor.data.nbytes)
             else:
-                nb = np.array(tensor.data).nbytes
-                orig_bytes += nb
-                quant_bytes += nb
+                nb = len(tensor.data)
+            orig_bytes += nb
+            quant_bytes += nb
 
     stats = {
         "policy": policy.name,

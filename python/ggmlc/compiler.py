@@ -151,6 +151,12 @@ def compile(
 
     # 4. Apply Block Quantization (Optional)
     if quantize is not None:
+        if release_module_storage:
+            import gc
+
+            for tensor in canonical_graph.tensors.values():
+                tensor.data = None
+            gc.collect()
         ggml_graph, _ = quantize_graph_parameters(ggml_graph, target_dtype=quantize)
 
     # 5. Extract metadata from pipeline and tasks if provided
@@ -178,6 +184,7 @@ def compile(
             import gc
 
             from ggmlc.frontend.pytorch.exporter import cleanup_released_storage
+            from ggmlc.serialization.spill import cleanup_spills
 
             for graph in (canonical_graph, ggml_graph):
                 for tensor in getattr(graph, "tensors", {}).values():
@@ -185,6 +192,7 @@ def compile(
             del canonical_graph, ggml_graph
             gc.collect()
             cleanup_released_storage()
+            cleanup_spills()
         if return_runner:
             return load(out_path, n_threads=n_threads, device=device)
         return out_path
