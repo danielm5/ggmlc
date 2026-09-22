@@ -17,15 +17,16 @@ The script will:
 4. Show a summary of what was generated
 """
 
-import yaml
-from typing import Dict, List, Any
-from pathlib import Path
-import os
-import subprocess
-import shutil
 import logging
+import os
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
 
-NL = '\n' # can't have f"{'\n'}" in f-strings
+import yaml
+
+NL = "\n"  # can't have f"{'\n'}" in f-strings
 
 
 class RemotingCodebaseGenerator:
@@ -36,12 +37,12 @@ class RemotingCodebaseGenerator:
         if not Path(yaml_path).exists():
             raise FileNotFoundError(f"Configuration file {yaml_path} not found")
 
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path, "r") as f:
             self.config = yaml.safe_load(f)
 
-        self.functions = self.config['functions']
-        self.naming_patterns = self.config['naming_patterns']
-        self.config_data = self.config['config']
+        self.functions = self.config["functions"]
+        self.naming_patterns = self.config["naming_patterns"]
+        self.config_data = self.config["config"]
 
         # Check if clang-format is available
         self.clang_format_available = self._check_clang_format_available()
@@ -57,10 +58,7 @@ class RemotingCodebaseGenerator:
 
         try:
             subprocess.run(
-                ["clang-format", "-i", str(file_path)],
-                check=True,
-                capture_output=True,
-                text=True
+                ["clang-format", "-i", str(file_path)], check=True, capture_output=True, text=True
             )
             return True
         except subprocess.CalledProcessError:
@@ -72,52 +70,58 @@ class RemotingCodebaseGenerator:
 
     def generate_enum_name(self, group_name: str, function_name: str) -> str:
         """Generate the APIR_COMMAND_TYPE enum name for a function."""
-        prefix = self.naming_patterns['enum_prefix']
+        prefix = self.naming_patterns["enum_prefix"]
         return f"{prefix}{group_name.upper()}_{function_name.upper()}"
 
     def generate_backend_function_name(self, group_name: str, function_name: str) -> str:
         """Generate the backend function name."""
         function_key = f"{group_name}_{function_name}"
-        overrides = self.naming_patterns.get('backend_function_overrides', {})
+        overrides = self.naming_patterns.get("backend_function_overrides", {})
 
         if function_key in overrides:
             return overrides[function_key]
 
-        prefix = self.naming_patterns['backend_function_prefix']
+        prefix = self.naming_patterns["backend_function_prefix"]
         return f"{prefix}{group_name}_{function_name}"
 
     def generate_frontend_function_name(self, group_name: str, function_name: str) -> str:
         """Generate the frontend function name."""
-        prefix = self.naming_patterns['frontend_function_prefix']
+        prefix = self.naming_patterns["frontend_function_prefix"]
         return f"{prefix}{group_name}_{function_name}"
 
-    def get_enabled_functions(self) -> List[Dict[str, Any]]:
+    def get_enabled_functions(self) -> list[dict[str, Any]]:
         """Get all enabled functions with their metadata."""
         functions = []
         enum_value = 0
 
         for group_name, group_data in self.functions.items():
-            group_description = group_data['group_description']
+            group_description = group_data["group_description"]
 
-            for function_name, func_metadata in group_data['functions'].items():
+            for function_name, func_metadata in group_data["functions"].items():
                 # Handle case where func_metadata is None or empty (functions with only comments)
                 if func_metadata is None:
                     func_metadata = {}
 
                 # Functions are enabled by default unless explicitly disabled
-                if func_metadata.get('enabled', True):
-                    functions.append({
-                        'group_name': group_name,
-                        'function_name': function_name,
-                        'enum_name': self.generate_enum_name(group_name, function_name),
-                        'enum_value': enum_value,
-                        'backend_function': self.generate_backend_function_name(group_name, function_name),
-                        'frontend_function': self.generate_frontend_function_name(group_name, function_name),
-                        'frontend_return': func_metadata.get('frontend_return', 'void'),
-                        'frontend_extra_params': func_metadata.get('frontend_extra_params', []),
-                        'group_description': group_description,
-                        'deprecated': func_metadata.get('deprecated', False),
-                    })
+                if func_metadata.get("enabled", True):
+                    functions.append(
+                        {
+                            "group_name": group_name,
+                            "function_name": function_name,
+                            "enum_name": self.generate_enum_name(group_name, function_name),
+                            "enum_value": enum_value,
+                            "backend_function": self.generate_backend_function_name(
+                                group_name, function_name
+                            ),
+                            "frontend_function": self.generate_frontend_function_name(
+                                group_name, function_name
+                            ),
+                            "frontend_return": func_metadata.get("frontend_return", "void"),
+                            "frontend_extra_params": func_metadata.get("frontend_extra_params", []),
+                            "group_description": group_description,
+                            "deprecated": func_metadata.get("deprecated", False),
+                        }
+                    )
                     enum_value += 1
 
         return functions
@@ -132,10 +136,10 @@ class RemotingCodebaseGenerator:
 
         for func in functions:
             # Add comment for new group
-            if func['group_name'] != current_group:
+            if func["group_name"] != current_group:
                 enum_lines.append("")
                 enum_lines.append(f"  /* {func['group_description']} */")
-                current_group = func['group_name']
+                current_group = func["group_name"]
 
             enum_lines.append(f"  {func['enum_name']} = {func['enum_value']},")
 
@@ -147,24 +151,26 @@ class RemotingCodebaseGenerator:
 
         # Generate function name mapping
         func_lines = []
-        func_lines.append("static inline const char * apir_dispatch_command_name(ApirBackendCommandType type) {")
+        func_lines.append(
+            "static inline const char * apir_dispatch_command_name(ApirBackendCommandType type) {"
+        )
         func_lines.append("    switch (type) {")
 
         current_group = None
         for func in functions:
             # Add comment for new group
-            if func['group_name'] != current_group:
+            if func["group_name"] != current_group:
                 func_lines.append(f"        /* {func['group_description']} */")
-                current_group = func['group_name']
+                current_group = func["group_name"]
 
             # Generate clean function name without backend_ prefix
             clean_name = f"{func['group_name']}_{func['function_name']}"
             func_lines.append(f"        case {func['enum_name']}:")
-            func_lines.append(f"            return \"{clean_name}\";")
+            func_lines.append(f'            return "{clean_name}";')
 
         func_lines.append("")
         func_lines.append("        default:")
-        func_lines.append("            return \"unknown\";")
+        func_lines.append('            return "unknown";')
         func_lines.append("    }")
         func_lines.append("}")
 
@@ -182,14 +188,16 @@ class RemotingCodebaseGenerator:
         current_group = None
 
         for func in functions:
-            if func['group_name'] != current_group:
+            if func["group_name"] != current_group:
                 decl_lines.append(f"\n/* {func['group_description']} */")
-                current_group = func['group_name']
+                current_group = func["group_name"]
 
             signature = "uint32_t"
             params = "apir_encoder *enc, apir_decoder *dec, virgl_apir_context *ctx"
-            if func['deprecated']:
-                decl_lines.append(f"/* {func['enum_name']} is deprecated. Keeping the handler for backward compatibility. */")
+            if func["deprecated"]:
+                decl_lines.append(
+                    f"/* {func['enum_name']} is deprecated. Keeping the handler for backward compatibility. */"
+                )
 
             decl_lines.append(f"{signature} {func['backend_function']}({params});")
 
@@ -198,15 +206,17 @@ class RemotingCodebaseGenerator:
         current_group = None
 
         for func in functions:
-            if func['group_name'] != current_group:
+            if func["group_name"] != current_group:
                 table_lines.append(f"\n  /* {func['group_description']} */")
                 table_lines.append("")
-                current_group = func['group_name']
+                current_group = func["group_name"]
 
-            deprecated = " /* DEPRECATED */" if func['deprecated'] else ""
-            table_lines.append(f"  /* {func['enum_name']}  = */ {func['backend_function']}{deprecated},")
+            deprecated = " /* DEPRECATED */" if func["deprecated"] else ""
+            table_lines.append(
+                f"  /* {func['enum_name']}  = */ {func['backend_function']}{deprecated},"
+            )
 
-        header_content = f'''\
+        header_content = f"""\
 #pragma once
 
 {NL.join(decl_lines)}
@@ -216,7 +226,7 @@ static const backend_dispatch_t apir_backend_dispatch_table[APIR_BACKEND_DISPATC
   {NL.join(table_lines)}
 }};
 }}
-'''
+"""
         return header_content
 
     def generate_virtgpu_forward_header(self) -> str:
@@ -227,26 +237,28 @@ static const backend_dispatch_t apir_backend_dispatch_table[APIR_BACKEND_DISPATC
         current_group = None
 
         for func in functions:
-            if func['group_name'] != current_group:
+            if func["group_name"] != current_group:
                 decl_lines.append("")
                 decl_lines.append(f"/* {func['group_description']} */")
-                current_group = func['group_name']
+                current_group = func["group_name"]
 
-            if func['deprecated']:
+            if func["deprecated"]:
                 decl_lines.append(f"/* {func['frontend_function']} is deprecated. */")
                 continue
 
             # Build parameter list
-            params = [self.naming_patterns['frontend_base_param']]
-            params.extend(func['frontend_extra_params'])
-            param_str = ', '.join(params)
+            params = [self.naming_patterns["frontend_base_param"]]
+            params.extend(func["frontend_extra_params"])
+            param_str = ", ".join(params)
 
-            decl_lines.append(f"{func['frontend_return']} {func['frontend_function']}({param_str});")
+            decl_lines.append(
+                f"{func['frontend_return']} {func['frontend_function']}({param_str});"
+            )
 
-        header_content = f'''\
+        header_content = f"""\
 #pragma once
 {NL.join(decl_lines)}
-'''
+"""
         return header_content
 
     def regenerate_codebase(self) -> None:
@@ -256,7 +268,7 @@ static const backend_dispatch_t apir_backend_dispatch_table[APIR_BACKEND_DISPATC
 
         # Detect if we're running from frontend directory
         current_dir = os.getcwd()
-        is_frontend_dir = current_dir.endswith('ggml-virtgpu')
+        is_frontend_dir = current_dir.endswith("ggml-virtgpu")
 
         if is_frontend_dir:
             # Running from ggml/src/ggml-virtgpu-apir
@@ -265,7 +277,7 @@ static const backend_dispatch_t apir_backend_dispatch_table[APIR_BACKEND_DISPATC
         else:
             # Running from project root (fallback to original behavior)
             logging.info("📍 Detected project root execution")
-            base_path = self.config_data.get('base_path', 'ggml/src')
+            base_path = self.config_data.get("base_path", "ggml/src")
             frontend_base = Path(base_path) / "ggml-virtgpu"
 
         # Compute final file paths
@@ -298,8 +310,10 @@ static const backend_dispatch_t apir_backend_dispatch_table[APIR_BACKEND_DISPATC
         generated_files = [apir_backend_path, backend_dispatched_path, virtgpu_forward_path]
 
         if not self.clang_format_available:
-            logging.warning("\n⚠️clang-format not found in PATH. Generated files will not be formatted.\n"
-                            "   Install clang-format to enable automatic code formatting.")
+            logging.warning(
+                "\n⚠️clang-format not found in PATH. Generated files will not be formatted.\n"
+                "   Install clang-format to enable automatic code formatting."
+            )
         else:
             logging.info("\n🎨 Formatting files with clang-format...")
             for file_path in generated_files:

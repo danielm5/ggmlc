@@ -17,13 +17,13 @@
 # and vocabulary.
 #
 
-import sys
-import struct
 import json
-import torch
-import numpy as np
+import struct
+import sys
 
+import numpy as np
 from transformers import GPTJForCausalLM
+
 
 # ref: https://github.com/openai/gpt-2/blob/master/src/encoder.py
 def bytes_to_unicode():
@@ -36,16 +36,21 @@ def bytes_to_unicode():
     To avoid that, we want lookup tables between utf-8 bytes and unicode strings.
     And avoids mapping to whitespace/control characters the bpe code barfs on.
     """
-    bs = list(range(ord("!"), ord("~")+1))+list(range(ord("¡"), ord("¬")+1))+list(range(ord("®"), ord("ÿ")+1))
+    bs = (
+        list(range(ord("!"), ord("~") + 1))
+        + list(range(ord("¡"), ord("¬") + 1))
+        + list(range(ord("®"), ord("ÿ") + 1))
+    )
     cs = bs[:]
     n = 0
     for b in range(2**8):
         if b not in bs:
             bs.append(b)
-            cs.append(2**8+n)
+            cs.append(2**8 + n)
             n += 1
     cs = [chr(n) for n in cs]
     return dict(zip(bs, cs))
+
 
 if len(sys.argv) < 3:
     print("Usage: convert-h5-to-ggml.py dir-model [use-f32]\n")
@@ -83,14 +88,14 @@ if len(sys.argv) > 2:
 
 
 model = GPTJForCausalLM.from_pretrained(dir_model, low_cpu_mem_usage=True)
-#print (model)
+# print (model)
 
 list_vars = model.state_dict()
-#print (list_vars)
+# print (list_vars)
 
 fout = open(fname_out, "wb")
 
-fout.write(struct.pack("i", 0x67676d6c)) # magic: ggml in hex
+fout.write(struct.pack("i", 0x67676D6C))  # magic: ggml in hex
 fout.write(struct.pack("i", hparams["vocab_size"]))
 fout.write(struct.pack("i", hparams["n_positions"]))
 fout.write(struct.pack("i", hparams["n_embd"]))
@@ -100,7 +105,7 @@ fout.write(struct.pack("i", hparams["rotary_dim"]))
 fout.write(struct.pack("i", ftype))
 
 byte_encoder = bytes_to_unicode()
-byte_decoder = {v:k for k, v in byte_encoder.items()}
+byte_decoder = {v: k for k, v in byte_encoder.items()}
 
 fout.write(struct.pack("i", len(encoder) + len(encoder_added)))
 
@@ -123,10 +128,9 @@ for name in list_vars.keys():
         print("  Skipping variable: " + name)
         continue
 
-    n_dims = len(data.shape);
-
+    n_dims = len(data.shape)
     # ftype == 0 -> float32, ftype == 1 -> float16
-    ftype_cur = 0;
+    ftype_cur = 0
     if ftype != 0:
         if name[-7:] == ".weight" and n_dims == 2:
             print("  Converting to float16")
@@ -149,7 +153,7 @@ for name in list_vars.keys():
     #  "transformer.h.*.attn.q_proj.weight"
     #  "transformer.h.*.attn.k_proj.weight"
     #  "transformer.h.*.attn.v_proj.weight"
-    #if name.endswith(".mlp.fc_in.weight")     or \
+    # if name.endswith(".mlp.fc_in.weight")     or \
     #   name.endswith(".attn.out_proj.weight") or \
     #   name.endswith(".attn.q_proj.weight")   or \
     #   name.endswith(".attn.k_proj.weight")   or \
@@ -158,16 +162,14 @@ for name in list_vars.keys():
     #    data = data.transpose()
 
     # header
-    str = name.encode('utf-8')
+    str = name.encode("utf-8")
     fout.write(struct.pack("iii", n_dims, len(str), ftype_cur))
-    for i in range(n_dims):
-        fout.write(struct.pack("i", data.shape[n_dims - 1 - i]))
-    fout.write(str);
-
+    fout.writelines(struct.pack("i", data.shape[n_dims - 1 - i]) for i in range(n_dims))
+    fout.write(str)
     # data
     data.tofile(fout)
 
 fout.close()
 
 print("Done. Output file: " + fname_out)
-print("")
+print()

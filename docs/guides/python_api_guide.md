@@ -155,7 +155,7 @@ Generates diagrammatic visualizations of Canonical IR or Lowered GGML execution 
 # Export pure-Python rendered PNG, SVG, or interactive HTML with zoom/pan
 ggmlc.visualize(graph, output_path="model_graph.png")  # Render to PNG image via mermaidx
 ggmlc.visualize(graph, output_path="model_graph.svg")  # Render to vector SVG
-ggmlc.visualize(graph, output_path="model_graph.html") # Interactive browser visualization
+ggmlc.visualize(graph, output_path="model_graph.html")  # Interactive browser visualization
 ```
 
 ---
@@ -202,6 +202,8 @@ token_ids = tokenizer.encode("The capital of France is")
 text = tokenizer.decode(token_ids)
 
 # 2. Chat template formatting (ChatML, Gemma, Llama-3)
-formatted = tokenizer.apply_chat_template("What is the capital of France?", system_msg="You are helpful.")
+formatted = tokenizer.apply_chat_template(
+    "What is the capital of France?", system_msg="You are helpful."
+)
 chat_ids = tokenizer.encode(formatted, add_special_tokens=False)
 ```

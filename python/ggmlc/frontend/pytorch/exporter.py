@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import gc
+import os
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -10,6 +13,40 @@ from torch.export import export
 from ggmlc.frontend.pytorch.importer import import_exported_program
 from ggmlc.ir.model import Model
 from ggmlc.transforms import create_standard_optimization_pipeline
+
+_RELEASED_FILES: list[Path] = []
+
+
+def cleanup_released_storage() -> None:
+    """Delete weight memmaps created by ``release_module_storage``."""
+    gc.collect()
+    for path in _RELEASED_FILES:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    _RELEASED_FILES.clear()
+
+
+def _owned_weight(array: np.ndarray) -> np.ndarray:
+    """Copy a weight into memory the module does not own.
+
+    Large copies go to a file-backed memmap so the extra buffer does not need
+    another private allocation while the torch parameters are still resident.
+    """
+    if array.nbytes < 1 << 20:
+        return np.array(array, copy=True, order="C")
+    fd, name = tempfile.mkstemp(prefix="ggmlc-w-", suffix=".bin")
+    os.close(fd)
+    path = Path(name)
+    _RELEASED_FILES.append(path)
+    mapped = np.memmap(path, dtype=array.dtype, mode="w+", shape=tuple(int(n) for n in array.shape))
+    if array.flags.c_contiguous:
+        mapped[...] = array
+    else:
+        mapped[...] = np.ascontiguousarray(array)
+    mapped.flush()
+    return mapped
 
 
 def _torch_owner(array: np.ndarray) -> torch.Tensor | None:
@@ -59,7 +96,7 @@ def _release_module_storage(model: torch.nn.Module, graph: Any) -> None:
 
     for ptr, items in sorted(grouped.items(), key=lambda kv: _nbytes(kv[1])):
         for tensor, _owner in items:
-            tensor.data = np.array(tensor.data, copy=True, order="C")
+            tensor.data = _owned_weight(tensor.data)
         for _tensor, owner in items:
             if owner is not None and owner.numel() > 0 and owner.data_ptr() == ptr:
                 owner.data = torch.empty(0, dtype=owner.dtype, device="cpu")
@@ -69,10 +106,9 @@ def _release_module_storage(model: torch.nn.Module, graph: Any) -> None:
         for buf in model.buffers():
             if buf.numel() > 0 and buf.data_ptr() == ptr:
                 buf.data = torch.empty(0, dtype=buf.dtype, device="cpu")
-        if _nbytes(items) >= 1 << 20:
-            gc.collect()
-            if empty_host is not None:
-                empty_host()
+        gc.collect()
+        if empty_host is not None:
+            empty_host()
 
 
 def export_torch_model(

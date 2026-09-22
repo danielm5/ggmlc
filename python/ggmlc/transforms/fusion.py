@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 
 import numpy as np
@@ -13,6 +15,30 @@ from ggmlc.ir.op import OpCode, Operation
 from ggmlc.ir.shape import Shape, StaticDim
 from ggmlc.ir.tensor import StorageClass
 from ggmlc.transforms.base import GraphTransformResult, Pass, PassStats
+
+
+def _concatenate_rows(parts: list[np.ndarray]) -> np.ndarray:
+    """Stack weight rows. Fall back to a file-backed buffer when RAM is tight."""
+    try:
+        return np.ascontiguousarray(np.concatenate(parts, axis=0))
+    except MemoryError:
+        rows = sum(int(part.shape[0]) for part in parts)
+        cols = int(parts[0].shape[1])
+        fd, name = tempfile.mkstemp(prefix="ggmlc-fuse-", suffix=".bin")
+        os.close(fd)
+        from pathlib import Path
+
+        from ggmlc.frontend.pytorch.exporter import _RELEASED_FILES
+
+        _RELEASED_FILES.append(Path(name))
+        fused = np.memmap(name, dtype=parts[0].dtype, mode="w+", shape=(rows, cols))
+        offset = 0
+        for part in parts:
+            n = int(part.shape[0])
+            fused[offset : offset + n] = part
+            offset += n
+        fused.flush()
+        return fused
 
 
 @dataclass
@@ -1240,7 +1266,7 @@ def _fuse_horizontal_linear_patterns(graph: Graph, options: FusionOptions) -> No
         out_dims = [int(w.data.shape[0]) for w in weights]
 
         # 1. Concatenate weights along dimension 0 (out_features)
-        fused_w_data = np.ascontiguousarray(np.concatenate([w.data for w in weights], axis=0))
+        fused_w_data = _concatenate_rows([w.data for w in weights])
         total_out_dim = int(fused_w_data.shape[0])
         fused_w_shape = Shape([StaticDim(total_out_dim), StaticDim(d_in)])
         fused_w_name = weights[0].name

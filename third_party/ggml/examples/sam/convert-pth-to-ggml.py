@@ -1,10 +1,11 @@
 # Convert a SAM model checkpoint to a ggml compatible file
 #
 
-import sys
-import torch
 import struct
+import sys
+
 import numpy as np
+import torch
 
 if len(sys.argv) < 3:
     print("Usage: convert-pth-to-ggml.py file-model dir-output [ftype]\n")
@@ -14,8 +15,8 @@ if len(sys.argv) < 3:
 
 # output in the same directory as the model
 fname_model = sys.argv[1]
-dir_out     = sys.argv[2]
-fname_out   = dir_out + "/ggml-model.bin"
+dir_out = sys.argv[2]
+fname_out = dir_out + "/ggml-model.bin"
 
 # possible data types
 #   ftype == 0 -> float32
@@ -47,19 +48,19 @@ for k, v in model.items():
     if k == "image_encoder.blocks.0.norm1.weight":
         n_enc_state = v.shape[0]
 
-if n_enc_state == 1024: # sam_vit_l
+if n_enc_state == 1024:  # sam_vit_l
     n_enc_layers = 24
-    n_enc_heads  = 16
-elif n_enc_state == 1280: # sam_vit_h
+    n_enc_heads = 16
+elif n_enc_state == 1280:  # sam_vit_h
     n_enc_layers = 32
-    n_enc_heads  = 16
+    n_enc_heads = 16
 
 hparams = {
-    "n_enc_state":      n_enc_state,
-    "n_enc_layers":     n_enc_layers,
-    "n_enc_heads":      n_enc_heads,
-    "n_enc_out_chans":  n_enc_out_chans,
-    "n_pt_embd":        n_pt_embd,
+    "n_enc_state": n_enc_state,
+    "n_enc_layers": n_enc_layers,
+    "n_enc_heads": n_enc_heads,
+    "n_enc_out_chans": n_enc_out_chans,
+    "n_pt_embd": n_pt_embd,
 }
 
 print(hparams)
@@ -67,12 +68,12 @@ print(hparams)
 for k, v in model.items():
     print(k, v.shape)
 
-#exit()
-#code.interact(local=locals())
+# exit()
+# code.interact(local=locals())
 
 fout = open(fname_out, "wb")
 
-fout.write(struct.pack("i", 0x67676d6c)) # magic: ggml in hex
+fout.write(struct.pack("i", 0x67676D6C))  # magic: ggml in hex
 fout.write(struct.pack("i", hparams["n_enc_state"]))
 fout.write(struct.pack("i", hparams["n_enc_layers"]))
 fout.write(struct.pack("i", hparams["n_enc_heads"]))
@@ -89,8 +90,8 @@ for k, v in model.items():
 
     print("Processing variable: " + name + " with shape: ", shape, " and type: ", v.dtype)
 
-    #data = tf.train.load_variable(dir_model, name).squeeze()
-    #data = v.numpy().squeeze()
+    # data = tf.train.load_variable(dir_model, name).squeeze()
+    # data = v.numpy().squeeze()
     data = v.numpy()
     n_dims = len(data.shape)
 
@@ -99,7 +100,7 @@ for k, v in model.items():
     # "model/h.*/attn/c_proj/w"
     # "model/h.*/mlp/c_fc/w"
     # "model/h.*/mlp/c_proj/w"
-    #if name[-14:] == "/attn/c_attn/w" or \
+    # if name[-14:] == "/attn/c_attn/w" or \
     #   name[-14:] == "/attn/c_proj/w" or \
     #   name[-11:] == "/mlp/c_fc/w" or \
     #   name[-13:] == "/mlp/c_proj/w":
@@ -110,11 +111,14 @@ for k, v in model.items():
 
     # default type is fp16
     ftype_cur = 1
-    if ftype == 0 or n_dims == 1 or \
-            name == "image_encoder.pos_embed" or \
-            name.startswith("prompt_encoder") or \
-            name.startswith("mask_decoder.iou_token") or \
-            name.startswith("mask_decoder.mask_tokens"):
+    if (
+        ftype == 0
+        or n_dims == 1
+        or name == "image_encoder.pos_embed"
+        or name.startswith("prompt_encoder")
+        or name.startswith("mask_decoder.iou_token")
+        or name.startswith("mask_decoder.mask_tokens")
+    ):
         print("  Converting to float32")
         data = data.astype(np.float32)
         ftype_cur = 0
@@ -132,10 +136,9 @@ for k, v in model.items():
     print("  New shape: ", dshape)
 
     # header
-    str = name.encode('utf-8')
+    str = name.encode("utf-8")
     fout.write(struct.pack("iii", n_dims, len(str), ftype_cur))
-    for i in range(n_dims):
-        fout.write(struct.pack("i", dshape[n_dims - 1 - i]))
+    fout.writelines(struct.pack("i", dshape[n_dims - 1 - i]) for i in range(n_dims))
     fout.write(str)
 
     # data
@@ -144,4 +147,4 @@ for k, v in model.items():
 fout.close()
 
 print("Done. Output file: " + fname_out)
-print("")
+print()

@@ -111,7 +111,9 @@ class KevCleanTrunk(nn.Module):
         self.register_buffer("causal_bias", causal.view(1, 1, self.buf_len, self.buf_len))
 
         types = getattr(cfg, "layer_types", None)
-        self.layer_types: list[str] = list(types) if types else ["full_attention"] * len(self.layers)
+        self.layer_types: list[str] = (
+            list(types) if types else ["full_attention"] * len(self.layers)
+        )
         if len(self.layer_types) < len(self.layers):
             self.layer_types.extend(["full_attention"] * (len(self.layers) - len(self.layer_types)))
         self.hybrid = any(t == "linear_attention" for t in self.layer_types)
@@ -124,12 +126,18 @@ class KevCleanTrunk(nn.Module):
         if attn0 is None:
             attn0 = getattr(self.layers[0], "self_attn", None)
         self.has_q_norm = bool(
-            attn0 is not None and hasattr(attn0, "q_norm") and not isinstance(attn0.q_norm, nn.Identity)
+            attn0 is not None
+            and hasattr(attn0, "q_norm")
+            and not isinstance(attn0.q_norm, nn.Identity)
         )
         self.has_k_norm = bool(
-            attn0 is not None and hasattr(attn0, "k_norm") and not isinstance(attn0.k_norm, nn.Identity)
+            attn0 is not None
+            and hasattr(attn0, "k_norm")
+            and not isinstance(attn0.k_norm, nn.Identity)
         )
-        q_out = int(attn0.q_proj.out_features) if attn0 is not None else self.num_heads * self.head_dim
+        q_out = (
+            int(attn0.q_proj.out_features) if attn0 is not None else self.num_heads * self.head_dim
+        )
         self.q_gated = q_out == self.num_heads * self.head_dim * 2
 
     def _apply_rope(

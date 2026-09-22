@@ -519,9 +519,11 @@ The following sections describe the metadata for each model architecture. Each k
   - `Meta AI original pth`:
     ```python
     def permute(weights: NDArray, n_head: int) -> NDArray:
-        return (weights.reshape(n_head, 2, weights.shape[0] // n_head // 2, *weights.shape[1:])
-                    .swapaxes(1, 2)
-                    .reshape(weights.shape))
+        return (
+            weights.reshape(n_head, 2, weights.shape[0] // n_head // 2, *weights.shape[1:])
+            .swapaxes(1, 2)
+            .reshape(weights.shape)
+        )
     ```
 - `llama.expert_count`
 - `llama.expert_used_count`
@@ -606,14 +608,13 @@ The following sections describe the metadata for each model architecture. Each k
     # in contiguous fashion.
 
     if "query_key_value" in src:
-        qkv = model[src].view(
-            n_head_kv, n_head // n_head_kv + 2, head_dim, head_dim * n_head)
+        qkv = model[src].view(n_head_kv, n_head // n_head_kv + 2, head_dim, head_dim * n_head)
 
-        q = qkv[:, :-2 ].reshape(n_head * head_dim, head_dim * n_head)
+        q = qkv[:, :-2].reshape(n_head * head_dim, head_dim * n_head)
         k = qkv[:, [-2]].reshape(n_head_kv * head_dim, head_dim * n_head)
         v = qkv[:, [-1]].reshape(n_head_kv * head_dim, head_dim * n_head)
 
-        model[src] = torch.cat((q,k,v)).reshape_as(model[src])
+        model[src] = torch.cat((q, k, v)).reshape_as(model[src])
     ```
 
 ##### Mamba

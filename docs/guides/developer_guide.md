@@ -29,6 +29,7 @@ class OpCode(Enum):
     # ...
     MY_NEW_OP = "my_new_op"
 
+
 @dataclass
 class OpSchema:
     opcode: OpCode
@@ -118,6 +119,7 @@ def test_my_new_op_numerical_parity():
    ```python
    from ggmlc.transforms.base import Pass, GraphTransformResult, PassStats
    from ggmlc.ir.graph import Graph
+
 
    class MyOptimizationPass(Pass):
        @property

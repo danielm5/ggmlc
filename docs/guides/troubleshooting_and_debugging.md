@@ -74,6 +74,7 @@ When compiling a multi-layer architecture (e.g. 24-layer Qwen or 8-layer BGE-M3)
        def __init__(self, block):
            super().__init__()
            self.block = block
+
        def forward(self, hidden_states, mask):
            return self.block(hidden_states, attention_mask=mask)[0]
    ```
@@ -92,7 +93,9 @@ with open("model.gguf", "rb") as f:
 
 print(f"Nodes: {len(g.nodes)}")
 for node in g.nodes:
-    print(f"  Op: {node.opcode.name:<20} in={node.inputs} out={node.outputs} attrs={node.attributes}")
+    print(
+        f"  Op: {node.opcode.name:<20} in={node.inputs} out={node.outputs} attrs={node.attributes}"
+    )
 ```
 
 ---

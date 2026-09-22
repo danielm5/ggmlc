@@ -64,7 +64,9 @@ ggml_graph = lower_to_ggml(canonical_graph)
 
 # 4. Quantize 2D Weight Parameters to Q4_0 or Q8_0
 quant_graph, stats = quantize_graph_parameters(ggml_graph, target_dtype=DType.Q4_0)
-print(f"Quantized {stats['tensors_quantized']} tensors: {stats['compression_ratio']:.2f}x compression")
+print(
+    f"Quantized {stats['tensors_quantized']} tensors: {stats['compression_ratio']:.2f}x compression"
+)
 
 # 5. Serialize to GGUF v3 binary container
 binary_bytes = serialize_ggml_graph(quant_graph)
@@ -91,12 +93,14 @@ To verify the numerical fidelity of quantized models against FP32 reference mode
 ```python
 import numpy as np
 
+
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     a_flat = a.flatten().astype(np.float64)
     b_flat = b.flatten().astype(np.float64)
     dot = np.dot(a_flat, b_flat)
     norm = np.linalg.norm(a_flat) * np.linalg.norm(b_flat)
     return float(dot / (norm + 1e-12))
+
 
 # Execute both models and compute similarity
 similarity = cosine_similarity(ref_output, quantized_output)

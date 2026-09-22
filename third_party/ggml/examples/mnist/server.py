@@ -1,10 +1,11 @@
 import http.server
-import socketserver
 import os
+import socketserver
 import sys
 
-DIRECTORY = os.path.abspath(os.path.join(os.path.dirname(__file__), 'web'))
+DIRECTORY = os.path.abspath(os.path.join(os.path.dirname(__file__), "web"))
 PORT = 8000
+
 
 class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -17,9 +18,11 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         super().end_headers()
 
+
 # Enable address reuse
 class CustomServer(socketserver.TCPServer):
     allow_reuse_address = True
+
 
 try:
     with CustomServer(("", PORT), CustomHTTPRequestHandler) as httpd:

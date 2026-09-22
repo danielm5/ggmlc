@@ -1,7 +1,4 @@
 # Phony stubs.
 
-class CData:
-    pass
-
-class CType:
-    pass
+class CData: ...
+class CType: ...

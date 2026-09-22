@@ -1,19 +1,19 @@
-import pytest
-from pytest import raises
-
-from ggml import lib, ffi
-from ggml.utils import init, copy, numpy
 import numpy as np
 import numpy.testing as npt
+import pytest
+from ggml import ffi, lib
+from ggml.utils import copy, init, numpy
+from pytest import raises
+
 
 @pytest.fixture()
 def ctx():
     print("setup")
-    yield init(mem_size=10*1024*1024)
+    yield init(mem_size=10 * 1024 * 1024)
     print("teardown")
 
+
 class TestNumPy:
-    
     # Single element
 
     def test_set_get_single_i32(self, ctx):
@@ -23,13 +23,13 @@ class TestNumPy:
 
     def test_set_get_single_f32(self, ctx):
         i = lib.ggml_new_f32(ctx, 4.2)
-        
-        epsilon = 0.000001 # Not sure why so large a difference??
+
+        epsilon = 0.000001  # Not sure why so large a difference??
         pytest.approx(lib.ggml_get_f32_1d(i, 0), 4.2, epsilon)
         pytest.approx(numpy(i), np.array([4.2], dtype=np.float32), epsilon)
 
     def _test_copy_np_to_ggml(self, a: np.ndarray, t: ffi.CData):
-        a2 = a.copy() # Clone original
+        a2 = a.copy()  # Clone original
         copy(a, t)
         npt.assert_array_equal(numpy(t), a2)
 
@@ -56,9 +56,10 @@ class TestNumPy:
         self._test_copy_np_to_ggml(a, t)
 
     def test_copy_np_to_ggml_4d_n_i32(self, ctx):
-        dims = [2, 3, 4, 5] # GGML_MAX_DIMS is 4, going beyond would crash
-        pdims = ffi.new('int64_t[]', len(dims))
-        for i, d in enumerate(dims): pdims[i] = d
+        dims = [2, 3, 4, 5]  # GGML_MAX_DIMS is 4, going beyond would crash
+        pdims = ffi.new("int64_t[]", len(dims))
+        for i, d in enumerate(dims):
+            pdims[i] = d
         t = lib.ggml_new_tensor(ctx, lib.GGML_TYPE_I32, len(dims), pdims)
         a = np.arange(np.prod(dims), dtype=np.int32).reshape(tuple(pdims))
         self._test_copy_np_to_ggml(a, t)
@@ -86,9 +87,10 @@ class TestNumPy:
         self._test_copy_np_to_ggml(a, t)
 
     def test_copy_np_to_ggml_4d_n_f32(self, ctx):
-        dims = [2, 3, 4, 5] # GGML_MAX_DIMS is 4, going beyond would crash
-        pdims = ffi.new('int64_t[]', len(dims))
-        for i, d in enumerate(dims): pdims[i] = d
+        dims = [2, 3, 4, 5]  # GGML_MAX_DIMS is 4, going beyond would crash
+        pdims = ffi.new("int64_t[]", len(dims))
+        for i, d in enumerate(dims):
+            pdims[i] = d
         t = lib.ggml_new_tensor(ctx, lib.GGML_TYPE_F32, len(dims), pdims)
         a = np.arange(np.prod(dims), dtype=np.float32).reshape(tuple(pdims))
         self._test_copy_np_to_ggml(a, t)
@@ -116,9 +118,10 @@ class TestNumPy:
         self._test_copy_np_to_ggml(a, t)
 
     def test_copy_np_to_ggml_4d_n_f16(self, ctx):
-        dims = [2, 3, 4, 5] # GGML_MAX_DIMS is 4, going beyond would crash
-        pdims = ffi.new('int64_t[]', len(dims))
-        for i, d in enumerate(dims): pdims[i] = d
+        dims = [2, 3, 4, 5]  # GGML_MAX_DIMS is 4, going beyond would crash
+        pdims = ffi.new("int64_t[]", len(dims))
+        for i, d in enumerate(dims):
+            pdims[i] = d
         t = lib.ggml_new_tensor(ctx, lib.GGML_TYPE_F16, len(dims), pdims)
         a = np.arange(np.prod(dims), dtype=np.float16).reshape(tuple(pdims))
         self._test_copy_np_to_ggml(a, t)
@@ -128,38 +131,46 @@ class TestNumPy:
     def test_copy_mismatching_shapes_1d(self, ctx):
         t = lib.ggml_new_tensor_1d(ctx, lib.GGML_TYPE_F32, 10)
         a = np.arange(10, dtype=np.float32)
-        copy(a, t) # OK
-        
+        copy(a, t)  # OK
+
         a = a.reshape((5, 2))
-        with raises(AssertionError): copy(a, t)
-        with raises(AssertionError): copy(t, a)
-            
+        with raises(AssertionError):
+            copy(a, t)
+        with raises(AssertionError):
+            copy(t, a)
+
     def test_copy_mismatching_shapes_2d(self, ctx):
         t = lib.ggml_new_tensor_2d(ctx, lib.GGML_TYPE_F32, 2, 3)
         a = np.arange(6, dtype=np.float32)
-        copy(a.reshape((2, 3)), t) # OK
-        
+        copy(a.reshape((2, 3)), t)  # OK
+
         a = a.reshape((3, 2))
-        with raises(AssertionError): copy(a, t)
-        with raises(AssertionError): copy(t, a)
+        with raises(AssertionError):
+            copy(a, t)
+        with raises(AssertionError):
+            copy(t, a)
 
     def test_copy_mismatching_shapes_3d(self, ctx):
         t = lib.ggml_new_tensor_3d(ctx, lib.GGML_TYPE_F32, 2, 3, 4)
         a = np.arange(24, dtype=np.float32)
-        copy(a.reshape((2, 3, 4)), t) # OK
-        
+        copy(a.reshape((2, 3, 4)), t)  # OK
+
         a = a.reshape((2, 4, 3))
-        with raises(AssertionError): copy(a, t)
-        with raises(AssertionError): copy(t, a)
+        with raises(AssertionError):
+            copy(a, t)
+        with raises(AssertionError):
+            copy(t, a)
 
     def test_copy_mismatching_shapes_4d(self, ctx):
         t = lib.ggml_new_tensor_4d(ctx, lib.GGML_TYPE_F32, 2, 3, 4, 5)
-        a = np.arange(24*5, dtype=np.float32)
-        copy(a.reshape((2, 3, 4, 5)), t) # OK
-        
+        a = np.arange(24 * 5, dtype=np.float32)
+        copy(a.reshape((2, 3, 4, 5)), t)  # OK
+
         a = a.reshape((2, 3, 5, 4))
-        with raises(AssertionError): copy(a, t)
-        with raises(AssertionError): copy(t, a)
+        with raises(AssertionError):
+            copy(a, t)
+        with raises(AssertionError):
+            copy(t, a)
 
     def test_copy_f16_to_f32(self, ctx):
         t = lib.ggml_new_tensor_1d(ctx, lib.GGML_TYPE_F32, 1)
@@ -191,11 +202,13 @@ class TestNumPy:
     def test_copy_i16_f32_mismatching_types(self, ctx):
         t = lib.ggml_new_tensor_1d(ctx, lib.GGML_TYPE_F32, 1)
         a = np.arange(1, dtype=np.int16)
-        with raises(NotImplementedError): copy(a, t)
-        with raises(NotImplementedError): copy(t, a)
+        with raises(NotImplementedError):
+            copy(a, t)
+        with raises(NotImplementedError):
+            copy(t, a)
+
 
 class TestTensorCopy:
-
     def test_copy_self(self, ctx):
         t = lib.ggml_new_i32(ctx, 42)
         copy(t, t)
@@ -210,8 +223,8 @@ class TestTensorCopy:
         assert np.allclose(a, numpy(t2))
         assert np.allclose(numpy(t1), numpy(t2))
 
-class TestGraph:
 
+class TestGraph:
     def test_add(self, ctx):
         n = 256
         ta = lib.ggml_new_tensor_1d(ctx, lib.GGML_TYPE_F32, n)
@@ -219,7 +232,7 @@ class TestGraph:
         tsum = lib.ggml_add(ctx, ta, tb)
         assert tsum.type == lib.GGML_TYPE_F32
 
-        gf = ffi.new('struct ggml_cgraph*')
+        gf = ffi.new("struct ggml_cgraph*")
         lib.ggml_build_forward_expand(gf, tsum)
 
         a = np.arange(0, n, dtype=np.float32)
@@ -231,8 +244,8 @@ class TestGraph:
 
         assert np.allclose(numpy(tsum, allow_copy=True), a + b)
 
-class TestQuantization:
 
+class TestQuantization:
     def test_quantized_add(self, ctx):
         n = 256
         ta = lib.ggml_new_tensor_1d(ctx, lib.GGML_TYPE_Q5_K, n)
@@ -240,7 +253,7 @@ class TestQuantization:
         tsum = lib.ggml_add(ctx, ta, tb)
         assert tsum.type == lib.GGML_TYPE_Q5_K
 
-        gf = ffi.new('struct ggml_cgraph*')
+        gf = ffi.new("struct ggml_cgraph*")
         lib.ggml_build_forward_expand(gf, tsum)
 
         a = np.arange(0, n, dtype=np.float32)

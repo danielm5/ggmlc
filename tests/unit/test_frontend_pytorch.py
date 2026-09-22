@@ -32,8 +32,11 @@ def test_release_module_storage_keeps_exported_weights():
         for tensor in exported.main_graph.tensors.values()
         if getattr(tensor, "data", None) is not None
     }
+
     def _matches(target: np.ndarray) -> bool:
-        return any(arr.shape == target.shape and np.allclose(arr, target) for arr in arrays.values())
+        return any(
+            arr.shape == target.shape and np.allclose(arr, target) for arr in arrays.values()
+        )
 
     assert _matches(weight)
     assert _matches(bias)

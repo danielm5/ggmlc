@@ -174,6 +174,17 @@ def compile(
 
     if output is not None:
         out_path = save_to_gguf(ggml_graph, output, extra_metadata=combined_metadata)
+        if release_module_storage and not return_runner:
+            import gc
+
+            from ggmlc.frontend.pytorch.exporter import cleanup_released_storage
+
+            for graph in (canonical_graph, ggml_graph):
+                for tensor in getattr(graph, "tensors", {}).values():
+                    tensor.data = None
+            del canonical_graph, ggml_graph
+            gc.collect()
+            cleanup_released_storage()
         if return_runner:
             return load(out_path, n_threads=n_threads, device=device)
         return out_path
