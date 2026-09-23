@@ -392,7 +392,7 @@ void BPETokenizer::encode_normal_text(const std::string& subtext, std::vector<in
             c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         }
 
-        static const std::regex clip_pattern(R"(<\|startoftext\|>|<\|endoftext\|>|'s|'t|'re|'ve|'m|'ll|'d|[a-zA-Z0-9]+|[^\s\a-zA-Z0-9]+)");
+        static const std::regex clip_pattern(R"(<\|startoftext\|>|<\|endoftext\|>|'s|'t|'re|'ve|'m|'ll|'d|[a-zA-Z0-9]+|[^\sa-zA-Z0-9]+)");
         auto words_begin = std::sregex_iterator(lower_text.begin(), lower_text.end(), clip_pattern);
         auto words_end = std::sregex_iterator();
 
@@ -413,7 +413,7 @@ void BPETokenizer::encode_normal_text(const std::string& subtext, std::vector<in
         }
     } else {
         // Standard GPT-2 / Llama byte encoder
-        static const std::regex pattern(R"('s|'t|'re|'ve|'m|'ll|'d| ?[a-zA-Z]+| ?[0-9]+| ?[^\s\a-zA-Z0-9]+|\s+(?!\S)|\s+)");
+        static const std::regex pattern(R"('s|'t|'re|'ve|'m|'ll|'d| ?[a-zA-Z]+| ?[0-9]+| ?[^\sa-zA-Z0-9]+|\s+(?!\S)|\s+)");
         auto words_begin = std::sregex_iterator(subtext.begin(), subtext.end(), pattern);
         auto words_end = std::sregex_iterator();
 
