@@ -8,6 +8,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(GGMLC_ENABLE_CUDA "Enable CUDA backend in ggmlc" OFF)
 option(GGMLC_ENABLE_METAL "Enable Metal backend in ggmlc" OFF)
+option(GGMLC_ENABLE_VULKAN "Enable Vulkan backend in ggmlc" OFF)
 option(GGMLC_BUILD_EXAMPLES "Build downstream application examples" ON)
 option(GGMLC_BUILD_TESTS "Build native runtime tests" OFF)
 
@@ -54,6 +55,14 @@ elseif (GGMLC_ENABLE_METAL)
 
     add_subdirectory(third_party/ggml)
     add_compile_definitions(GGML_USE_METAL)
+elseif (GGMLC_ENABLE_VULKAN)
+    set(GGML_VULKAN ON CACHE BOOL "Enable Vulkan in GGML" FORCE)
+    set(GGML_BUILD_TESTS OFF CACHE BOOL "Disable GGML tests" FORCE)
+    set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "Disable GGML examples" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static GGML libraries" FORCE)
+
+    add_subdirectory(third_party/ggml)
+    add_compile_definitions(GGML_USE_VULKAN)
 else()
     # GGML Library source files (CPU-only build)
     set(GGML_SOURCES

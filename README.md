@@ -475,6 +475,10 @@ cmake --build build -j$(nproc)
 # Build with NVIDIA CUDA GPU acceleration
 cmake -B build-cuda -DGGMLC_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="all" -DCMAKE_BUILD_TYPE=Release
 cmake --build build-cuda -j$(nproc)
+
+# Build with Vulkan GPU acceleration (AMD / NVIDIA / Intel, needs glslc)
+cmake -B build-vulkan -DGGMLC_ENABLE_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-vulkan -j$(nproc)
 ```
 
 CPU-only GCC/Clang builds optimize for the build machine by default. Use

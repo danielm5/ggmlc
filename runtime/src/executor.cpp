@@ -24,6 +24,9 @@
 #if defined(GGML_USE_METAL)
 #include "ggml-metal.h"
 #endif
+#if defined(GGML_USE_VULKAN)
+#include "ggml-vulkan.h"
+#endif
 #include "ggmlc/stdlib_kernels.h"
 
 namespace ggmlc {
@@ -191,6 +194,15 @@ std::vector<std::string> ModelExecutor::get_available_devices() {
 #if defined(GGML_USE_METAL)
     devices.push_back("metal");
 #endif
+#if defined(GGML_USE_VULKAN)
+    int n_vk = ggml_backend_vk_get_device_count();
+    for (int i = 0; i < n_vk; ++i) {
+        devices.push_back("vulkan:" + std::to_string(i));
+    }
+    if (n_vk > 0) {
+        devices.push_back("vulkan");
+    }
+#endif
     return devices;
 }
 
@@ -211,6 +223,14 @@ ModelExecutor::ModelExecutor(const SerializedModelGraph& graph, const std::strin
 #elif defined(GGML_USE_METAL)
         dev_lower = "metal";
         device_ = "metal";
+#elif defined(GGML_USE_VULKAN)
+        if (ggml_backend_vk_get_device_count() > 0) {
+            dev_lower = "vulkan:0";
+            device_ = "vulkan:0";
+        } else {
+            dev_lower = "cpu";
+            device_ = "cpu";
+        }
 #else
         dev_lower = "cpu";
         device_ = "cpu";
@@ -240,6 +260,20 @@ ModelExecutor::ModelExecutor(const SerializedModelGraph& graph, const std::strin
             throw std::runtime_error("Failed to initialize GGML Metal backend.");
         }
         device_ = "metal";
+        is_cuda_ = false;
+    }
+#endif
+#if defined(GGML_USE_VULKAN)
+    else if (dev_lower.rfind("vulkan", 0) == 0) {
+        size_t device_idx = 0;
+        if (dev_lower.size() > 7 && dev_lower[6] == ':') {
+            device_idx = static_cast<size_t>(std::stoi(dev_lower.substr(7)));
+        }
+        backend_ = ggml_backend_vk_init(device_idx);
+        if (!backend_) {
+            throw std::runtime_error("Failed to initialize GGML Vulkan backend on device " + std::to_string(device_idx));
+        }
+        device_ = "vulkan:" + std::to_string(device_idx);
         is_cuda_ = false;
     }
 #endif
