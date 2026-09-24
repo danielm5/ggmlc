@@ -46,9 +46,12 @@ class DeadCodeEliminationPass(Pass):
                             visited_tensors.add(in_id)
                             worklist.append(in_id)
 
-        # Always preserve inputs and persistent states (parameters are preserved if referenced)
+        # Always preserve inputs, persistent states, and export-required module
+        # state (lifted params/buffers with zero FX users — host-side sidecars).
+        # Ordinary PARAMETER/CONSTANT remain live only when referenced by a node;
+        # that still lets bake/fusion orphan cleanup drop absorbed weights.
         for tid, tensor in graph.tensors.items():
-            if tensor.storage in (StorageClass.INPUT, StorageClass.STATE):
+            if tensor.storage in (StorageClass.INPUT, StorageClass.STATE) or tensor.export_required:
                 visited_tensors.add(tid)
 
         # 3. Construct clean pruned graph

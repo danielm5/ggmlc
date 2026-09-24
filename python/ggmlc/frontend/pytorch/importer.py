@@ -147,6 +147,11 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
         shape = _torch_shape_to_shape(val.shape)
         dtype = DType.from_torch(val.dtype)
 
+        # torch.export lifts every Module parameter/buffer as a placeholder, even
+        # when the FX node has zero users (host-consumed sidecars like PlaidQ's
+        # embedding_matrix). Mark those so DCE does not treat them as dead weights.
+        unused_module_state = len(node.users) == 0
+
         if target_name in lifted_params:
             param_name = lifted_params[target_name]
             param_tensor = ep.state_dict[param_name]
@@ -158,6 +163,8 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                     and param_tensor.stride() == existing_param.stride()
                     and param_tensor.dtype == existing_param.dtype
                 ):
+                    if not unused_module_state:
+                        existing_t.export_required = False
                     node_to_tensor[node] = existing_t
                     name_to_tensor[node.name] = existing_t
                     continue
@@ -169,6 +176,7 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                 storage=StorageClass.PARAMETER,
                 data=param_tensor.detach().cpu().numpy(),
                 role="parameter",
+                export_required=unused_module_state,
             )
             g.parameters.append(t.id)
             param_ptrs[ptr] = (t, param_tensor)
@@ -187,6 +195,8 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                     and buf_tensor.stride() == existing_param.stride()
                     and buf_tensor.dtype == existing_param.dtype
                 ):
+                    if not unused_module_state:
+                        existing_t.export_required = False
                     node_to_tensor[node] = existing_t
                     name_to_tensor[node.name] = existing_t
                     continue
@@ -200,6 +210,7 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                 storage=StorageClass.CONSTANT,
                 data=data,
                 role="constant",
+                export_required=unused_module_state,
             )
             g.parameters.append(t.id)
             if ptr is not None and buf_tensor is not None:

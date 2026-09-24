@@ -45,6 +45,49 @@ def test_dead_code_elimination():
     assert res.stats.dead_nodes_pruned == 1
 
 
+def test_dce_preserves_export_required_unused_parameter():
+    """Host-only Module buffers must survive DCE when marked export_required."""
+    g = Graph("test_export_required")
+    x = g.add_tensor("x", Shape([2, 4]), DType.F32, StorageClass.INPUT)
+    w = g.add_tensor(
+        "lin.weight",
+        Shape([4, 4]),
+        DType.F32,
+        StorageClass.PARAMETER,
+        data=np.eye(4, dtype=np.float32),
+    )
+    emb = g.add_tensor(
+        "embedding_matrix",
+        Shape([8, 4]),
+        DType.F32,
+        StorageClass.CONSTANT,
+        data=np.ones((8, 4), dtype=np.float32),
+        export_required=True,
+    )
+    dead_gamma = g.add_tensor(
+        "rms.weight",
+        Shape([4]),
+        DType.F32,
+        StorageClass.PARAMETER,
+        data=np.ones(4, dtype=np.float32),
+    )
+    out = g.add_tensor("out", Shape([2, 4]), DType.F32, StorageClass.ACTIVATION)
+
+    g.add_node(OpCode.LINEAR, inputs=[x.id, w.id], outputs=[out.id])
+    g.inputs = [x.id]
+    g.outputs = [out.id]
+    g.parameters = [w.id, emb.id, dead_gamma.id]
+
+    res = DeadCodeEliminationPass().run(g)
+    assert emb.id in res.graph.tensors
+    assert emb.id in res.graph.parameters
+    assert res.graph.tensors[emb.id].export_required is True
+    # Absorbed / unreachable weights without the flag still prune.
+    assert dead_gamma.id not in res.graph.tensors
+    assert dead_gamma.id not in res.graph.parameters
+    assert w.id in res.graph.tensors
+
+
 def test_constant_folding():
     """Verify compile-time evaluation of static math operations."""
     g = Graph("test_const_folding")

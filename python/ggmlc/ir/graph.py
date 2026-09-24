@@ -52,6 +52,7 @@ class Graph:
         data: any | None = None,
         role: str | None = None,
         tensor_id: int | None = None,
+        export_required: bool = False,
     ) -> Tensor:
         if tensor_id is None:
             tensor_id = self.new_tensor_id()
@@ -67,6 +68,7 @@ class Graph:
             producer_id=producer_id,
             data=data,
             role=role,
+            export_required=export_required,
         )
         self.tensors[tensor_id] = t
         return t

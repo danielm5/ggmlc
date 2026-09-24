@@ -20,15 +20,8 @@ import plaidq.hub
 import plaidq.qwen3_trunk as qt
 import torch
 import torch.nn.functional as F
-from ggmlc.dialect.ggml.lowering import GGMLTensorDef, lower_to_ggml
-from ggmlc.dialect.ggml.ops import GGMLType
-from ggmlc.frontend.pytorch import export_torch_model
-from ggmlc.ir.shape import StaticDim
-from ggmlc.ir.tensor import StorageClass
+from ggmlc import compile as ggmlc_compile
 from ggmlc.pipeline.tokenizer import BPETokenizer
-from ggmlc.quantization import quantize_graph_parameters
-from ggmlc.serialization.gguf import save_to_gguf
-from ggmlc.transforms import create_standard_optimization_pipeline
 from plaidq.sample import (
     _build_modules,
     _load_module_states,
@@ -140,7 +133,6 @@ def load_denoiser() -> tuple[Denoiser, dict]:
     )
     wrapper = Denoiser(model, codebook).eval()
     meta = {
-        "_codebook": codebook,
         "plaidq.vocab_size": int(codebook.shape[0]),
         "plaidq.embed_dim": int(codebook.shape[1]),
         "plaidq.gamma_0": gamma_0,
@@ -168,46 +160,20 @@ def compile_one(quantize: str, output: Path | None) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     tokenizer = BPETokenizer.from_huggingface(TOKENIZER, context_length=CANVAS)
 
-    codebook = meta.pop("_codebook").detach().float().cpu().numpy()
     print(f"compiling -> {output} quantize={quantize}")
-    exported = export_torch_model(
+    quant_arg = None if quantize in ("f32", "none") else quantize
+    out_path = ggmlc_compile(
         wrapper,
         (z, gamma, x_selfcond),
+        output=output,
         model_name="plaidq-0.7b-16step",
+        quantize=quant_arg,
+        pipeline=tokenizer,
+        tasks=["completion"],
+        extra_metadata=meta,
     )
-    graph = create_standard_optimization_pipeline().run(exported.main_graph).graph
-    graph.name = "plaidq-0.7b-16step"
-    ggml_graph = lower_to_ggml(graph)
-    if quantize not in ("f32", "none"):
-        ggml_graph, _ = quantize_graph_parameters(ggml_graph, target_dtype=quantize)
-    _attach_codebook(ggml_graph, codebook)
-
-    combined = dict(meta)
-    combined.update(tokenizer.to_gguf_metadata())
-    combined["ggmlc.tasks"] = ["completion"]
-    save_to_gguf(ggml_graph, output, extra_metadata=combined)
-    print("wrote", output, "bytes", output.stat().st_size)
-    return output
-
-
-def _attach_codebook(ggml_graph, codebook: np.ndarray) -> None:
-    """Store the diffusion codebook beside the graph.
-
-    Logits do not read it. The C++ engine loads the GGUF tensor
-    ``embedding_matrix`` and rebuilds latents on the host. Inner dim 16
-    is not a Q4/Q8 block, so this copy stays F32.
-    """
-    arr = np.ascontiguousarray(codebook, dtype=np.float32)
-    vocab, embed = arr.shape
-    tid = (max(ggml_graph.tensors) + 1) if ggml_graph.tensors else 0
-    ggml_graph.tensors[tid] = GGMLTensorDef(
-        id=tid,
-        name="embedding_matrix",
-        ggml_type=GGMLType.GGML_TYPE_F32,
-        ne=(StaticDim(embed), StaticDim(vocab), StaticDim(1), StaticDim(1)),
-        storage=StorageClass.PARAMETER,
-        data=arr,
-    )
+    print("wrote", out_path, "bytes", Path(out_path).stat().st_size)
+    return Path(out_path)
 
 
 def main() -> None:

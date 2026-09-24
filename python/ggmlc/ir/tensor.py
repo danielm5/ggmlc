@@ -31,6 +31,9 @@ class Tensor:
     producer_id: int | None = None
     data: np.ndarray | None = None
     role: str | None = None
+    # Module state lifted by torch.export with zero FX users (e.g. a host-only
+    # codebook buffer). Must serialize even when no compute op references it.
+    export_required: bool = False
 
     def __post_init__(self):
         if not isinstance(self.id, int):
@@ -43,6 +46,8 @@ class Tensor:
             raise TypeError("Tensor dtype must be DType instance")
         if not isinstance(self.storage, StorageClass):
             raise TypeError("Tensor storage must be StorageClass instance")
+        if not isinstance(self.export_required, bool):
+            raise TypeError("Tensor export_required must be bool")
 
     @property
     def is_constant(self) -> bool:

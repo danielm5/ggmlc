@@ -85,7 +85,7 @@ The Canonical IR represents the neural network as a purely functional, framework
 Graph optimizations are performed on the Canonical IR by `PassManager`:
 - **`ConstantFoldingPass`**: Pre-evaluates deterministic constant subgraphs at compile time.
 - **`OperatorFusionPass`**: Fuses composite patterns (Conv2D+ReLU, Linear+Bias, SwiGLU, LayerNorm, RMSNorm) into monolithic operations.
-- **`DeadCodeEliminationPass`**: Prunes unreachable nodes and orphan activations via backward reachability from outputs and states.
+- **`DeadCodeEliminationPass`**: Prunes unreachable nodes and orphan activations via backward reachability from outputs and states. Also retains `export_required` Module state (lifted unused buffers/params) so host-side sidecars serialize into GGUF.
 - **`RedundantCastPruner`**: Removes identity transpositions and identical dtype casts.
 
 ### Stage 4: Target Dialect Lowering (GGML Dialect)
