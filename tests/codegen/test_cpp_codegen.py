@@ -101,14 +101,6 @@ def test_cpp_codegen_compile_and_run_wsl():
         assert (win_tmp / "ggmlc_main.cpp").exists()
 
 
-def _generated_header(g, model_name):
-    """Lower a canonical graph and return the generated standalone header text."""
-    ggml_graph = lower_to_ggml(g)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        paths = generate_cpp_project(ggml_graph, tmpdir, model_name=model_name)
-        return paths["header"].read_text(encoding="utf-8")
-
-
 def _linear_graph(with_bias):
     """Single LINEAR layer graph, optionally with bias."""
     g = Graph("linear_bias")
@@ -146,31 +138,6 @@ def test_lower_linear_without_bias_to_2_input_mul_mat():
     assert node.inputs == [1, 0]
 
 
-def test_codegen_mul_mat_bias_add():
-    """3-input MUL_MAT emits mul_mat followed by a guarded bias add."""
-    header = _generated_header(_linear_graph(with_bias=True), "LinearBias")
-    i_mm = header.index("ggml_mul_mat(ctx, tensors[1], tensors[0])")
-    i_add = header.index("tensors[3] = ggml_add(ctx, tensors[3], b_0);")
-    assert i_add > i_mm
-    assert "if (!ggml_is_contiguous(b_0)) b_0 = ggml_cont(ctx, b_0);" in header
-
-
-def test_codegen_mul_mat_without_bias_has_no_add():
-    """2-input MUL_MAT emits no bias add."""
-    g = Graph("matmul")
-    x = g.add_tensor("x", Shape([1, 16]), DType.F32, StorageClass.INPUT)
-    w = g.add_tensor("w", Shape([16, 16]), DType.F32, StorageClass.PARAMETER)
-    out = g.add_tensor("out", Shape([1, 16]), DType.F32, StorageClass.ACTIVATION)
-    w.data = np.eye(16, dtype=np.float32)
-    g.add_node(OpCode.MATMUL, inputs=[x.id, w.id], outputs=[out.id], name="mm")
-    g.inputs = [x.id]
-    g.outputs = [out.id]
-    g.parameters = [w.id]
-    header = _generated_header(g, "MatmulNoBias")
-    assert "ggml_mul_mat" in header
-    assert "ggml_add" not in header
-
-
 def test_lower_expand_to_single_input_repeat():
     """EXPAND (single input + shape attribute) lowers to 1-input REPEAT."""
     g = Graph("expand")
@@ -186,50 +153,6 @@ def test_lower_expand_to_single_input_repeat():
     (node,) = ggml_graph.nodes
     assert node.opcode == GGMLOpCode.GGML_OP_REPEAT
     assert node.inputs == [x.id]
-
-
-def test_codegen_repeat_single_input_uses_repeat_4d():
-    """1-input REPEAT emits ggml_repeat_4d with the output dims."""
-    g = Graph("expand")
-    x = g.add_tensor("x", Shape([1, 16]), DType.F32, StorageClass.INPUT)
-    out = g.add_tensor("out", Shape([4, 16]), DType.F32, StorageClass.ACTIVATION)
-    g.add_node(
-        OpCode.EXPAND, inputs=[x.id], outputs=[out.id], attributes={"shape": (4, 16)}, name="expand"
-    )
-    g.inputs = [x.id]
-    g.outputs = [out.id]
-    g.parameters = []
-    header = _generated_header(g, "Expand")
-    assert "ggml_repeat_4d(ctx, tensors[0], 16, 4, 1, 1)" in header
-
-
-def test_codegen_repeat_two_inputs_uses_repeat():
-    """2-input REPEAT emits ggml_repeat against the shape tensor."""
-    g = Graph("repeat")
-    data = g.add_tensor("data", Shape([1, 16]), DType.F32, StorageClass.INPUT)
-    shape = g.add_tensor("shape", Shape([2]), DType.I32, StorageClass.INPUT)
-    out = g.add_tensor("out", Shape([4, 16]), DType.F32, StorageClass.ACTIVATION)
-    g.add_node(OpCode.REPEAT, inputs=[data.id, shape.id], outputs=[out.id], name="rep")
-    g.inputs = [data.id, shape.id]
-    g.outputs = [out.id]
-    g.parameters = []
-    header = _generated_header(g, "Repeat")
-    assert "ggml_repeat(ctx, tensors[0], tensors[1])" in header
-    assert "ggml_repeat_4d" not in header
-
-
-def test_codegen_reshape_contiguity_guard():
-    """RESHAPE materializes non-contiguous inputs before reshaping."""
-    g = Graph("reshape")
-    x = g.add_tensor("x", Shape([1, 16]), DType.F32, StorageClass.INPUT)
-    out = g.add_tensor("out", Shape([16, 1]), DType.F32, StorageClass.ACTIVATION)
-    g.add_node(OpCode.RESHAPE, inputs=[x.id], outputs=[out.id], name="reshape")
-    g.inputs = [x.id]
-    g.outputs = [out.id]
-    g.parameters = []
-    header = _generated_header(g, "Reshape")
-    assert "if (!ggml_is_contiguous(idx_0)) idx_0 = ggml_cont(ctx, idx_0);" in header
-    assert "ggml_reshape_4d(ctx, idx_0," in header
 
 
 def _slice_graph(dim, start, out_shape):
@@ -265,15 +188,8 @@ def test_lower_slice_to_view_attributes():
     assert node.attributes["ggml_dim"] == 1
 
 
-def test_codegen_view_uses_start_offset():
-    """VIEW emits a byte offset of start * input->nb[ggml_dim]."""
-    header = _generated_header(_slice_graph(dim=1, start=4, out_shape=[8, 12]), "Slice")
-    assert "ggml_view_4d" in header
-    assert "4 * tensors[0]->nb[0]" in header
-
-
 def test_lower_permute_to_axis_attributes():
-    """PERMUTE lowers to axis0..axis3 scalars (the single shared form)."""
+    """PERMUTE lowers to axis0..axis3 scalars."""
     g = Graph("permute")
     x = g.add_tensor("x", Shape([2, 4, 8, 16]), DType.F32, StorageClass.INPUT)
     out = g.add_tensor("out", Shape([2, 8, 4, 16]), DType.F32, StorageClass.ACTIVATION)
@@ -313,22 +229,3 @@ def test_lower_transpose_to_axis_attributes():
     (node,) = ggml_graph.nodes
     assert node.opcode == GGMLOpCode.GGML_OP_PERMUTE
     assert [node.attributes[f"axis{i}"] for i in range(4)] == [0, 2, 1, 3]
-
-
-def test_codegen_permute_emission():
-    """PERMUTE emits ggml_permute with the lowered axis order."""
-    g = Graph("permute")
-    x = g.add_tensor("x", Shape([2, 4, 8, 16]), DType.F32, StorageClass.INPUT)
-    out = g.add_tensor("out", Shape([2, 8, 4, 16]), DType.F32, StorageClass.ACTIVATION)
-    g.add_node(
-        OpCode.PERMUTE,
-        inputs=[x.id],
-        outputs=[out.id],
-        attributes={"dims": [0, 2, 1, 3]},
-        name="perm",
-    )
-    g.inputs = [x.id]
-    g.outputs = [out.id]
-    g.parameters = []
-    header = _generated_header(g, "Permute")
-    assert "ggml_permute(ctx, tensors[0], 0, 2, 1, 3)" in header

@@ -237,16 +237,23 @@ class GGMLCCppCodeGenerator:
             lines.append(f"    tensors[{out_id}] = ggml_div(ctx, {inp_vars[0]}, {inp_vars[1]});")
         elif node.opcode == GGMLOpCode.GGML_OP_MUL_MAT:
             if node.attributes.get("transpose_in0", 0) == 1:
+                # transpose does not need its source to be contiguous, but the
+                # result of the transpose must be made contiguous for the matmul
                 lines.append(
-                    f"    struct ggml_tensor* t_tr_{node.id} = ggml_transpose(ctx, {inp_vars[0]});"
-                )
-                lines.append(
-                    f"    tensors[{out_id}] = ggml_mul_mat(ctx, t_tr_{node.id}, {inp_vars[1]});"
+                    f"    struct ggml_tensor* mm0_{node.id} = ggml_cont(ctx, ggml_transpose(ctx, {inp_vars[0]}));"
                 )
             else:
+                lines.append(f"    struct ggml_tensor* mm0_{node.id} = {inp_vars[0]};")
                 lines.append(
-                    f"    tensors[{out_id}] = ggml_mul_mat(ctx, {inp_vars[0]}, {inp_vars[1]});"
+                    f"    if (!ggml_is_contiguous(mm0_{node.id})) mm0_{node.id} = ggml_cont(ctx, mm0_{node.id});"
                 )
+            lines.append(f"    struct ggml_tensor* mm1_{node.id} = {inp_vars[1]};")
+            lines.append(
+                f"    if (!ggml_is_contiguous(mm1_{node.id})) mm1_{node.id} = ggml_cont(ctx, mm1_{node.id});"
+            )
+            lines.append(
+                f"    tensors[{out_id}] = ggml_mul_mat(ctx, mm0_{node.id}, mm1_{node.id});"
+            )
             b_arg = inp_vars[2] if len(inp_vars) > 2 else "nullptr"
             if b_arg != "nullptr":
                 lines.append(f"    struct ggml_tensor* b_{node.id} = {b_arg};")
