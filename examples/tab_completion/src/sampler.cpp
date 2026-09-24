@@ -10,10 +10,45 @@ DiffusionSampler::DiffusionSampler(
     float gamma_1
 ) : gamma_0_(gamma_0), gamma_1_(gamma_1) {}
 
+void DiffusionSampler::set_normalized_schedule(std::vector<float> t, std::vector<float> g) {
+    if (t.size() < 2 || t.size() != g.size()) {
+        schedule_t_.clear();
+        schedule_g_.clear();
+        return;
+    }
+    schedule_t_ = std::move(t);
+    schedule_g_ = std::move(g);
+}
+
+float DiffusionSampler::normalized_gamma(float t) const {
+    const float tc = std::max(0.0f, std::min(1.0f, t));
+    if (schedule_t_.size() < 2) return tc;
+    if (tc <= schedule_t_.front()) return schedule_g_.front();
+    if (tc >= schedule_t_.back()) return schedule_g_.back();
+    const auto it = std::lower_bound(schedule_t_.begin(), schedule_t_.end(), tc);
+    const size_t hi = static_cast<size_t>(it - schedule_t_.begin());
+    const size_t lo = hi - 1;
+    const float span = schedule_t_[hi] - schedule_t_[lo];
+    const float w = span > 0.0f ? (tc - schedule_t_[lo]) / span : 0.0f;
+    return schedule_g_[lo] + w * (schedule_g_[hi] - schedule_g_[lo]);
+}
+
+float DiffusionSampler::time_at_normalized_gamma(float g) const {
+    const float gc = std::max(0.0f, std::min(1.0f, g));
+    if (schedule_g_.size() < 2) return gc;
+    // s(t) is monotone increasing. Invert by walking the table.
+    if (gc <= schedule_g_.front()) return schedule_t_.front();
+    if (gc >= schedule_g_.back()) return schedule_t_.back();
+    size_t hi = 1;
+    while (hi + 1 < schedule_g_.size() && schedule_g_[hi] < gc) ++hi;
+    const size_t lo = hi - 1;
+    const float span = schedule_g_[hi] - schedule_g_[lo];
+    const float w = span > 0.0f ? (gc - schedule_g_[lo]) / span : 0.0f;
+    return schedule_t_[lo] + w * (schedule_t_[hi] - schedule_t_[lo]);
+}
+
 float DiffusionSampler::gamma_from_t(float t) const {
-    // Clamp t to [0.0, 1.0]
-    float tc = std::max(0.0f, std::min(1.0f, t));
-    return gamma_0_ + (gamma_1_ - gamma_0_) * tc;
+    return gamma_0_ + (gamma_1_ - gamma_0_) * normalized_gamma(t);
 }
 
 std::vector<std::pair<float, float>> DiffusionSampler::get_time_schedule(int n_steps) const {
@@ -23,10 +58,12 @@ std::vector<std::pair<float, float>> DiffusionSampler::get_time_schedule(int n_s
         return schedule;
     }
 
+    // Equal steps in normalized log-SNR. A linear grid in t spends almost
+    // every step below the token-decision band of this checkpoint.
     for (int i = 0; i < n_steps; ++i) {
-        float t = 1.0f - static_cast<float>(i) / static_cast<float>(n_steps);
-        float s = 1.0f - static_cast<float>(i + 1) / static_cast<float>(n_steps);
-        schedule.push_back({t, s});
+        float g_t = 1.0f - static_cast<float>(i) / static_cast<float>(n_steps);
+        float g_s = 1.0f - static_cast<float>(i + 1) / static_cast<float>(n_steps);
+        schedule.push_back({time_at_normalized_gamma(g_t), time_at_normalized_gamma(g_s)});
     }
     return schedule;
 }

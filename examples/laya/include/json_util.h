@@ -114,7 +114,16 @@ inline std::string json_dumps(const JsonValue& v) {
         case JsonKind::Null: return "null";
         case JsonKind::Bool: return v.b ? "true" : "false";
         case JsonKind::Number: {
-            if (std::isfinite(v.n) && std::floor(v.n) == v.n && std::fabs(v.n) < 1e15) {
+            // NaN and +/-Inf have no JSON spelling: the stream below prints them as
+            // bare `-nan` / `inf`, which is not valid JSON. Strict clients then fail
+            // outright, and /v1/decide/batch -- which re-parses its own generated
+            // answers -- surfaces it as a bogus "JSON parse error at <fixed offset>"
+            // 500. Emit null so a non-finite value reads as "no value" instead of
+            // corrupting the entire response.
+            if (!std::isfinite(v.n)) {
+                return "null";
+            }
+            if (std::floor(v.n) == v.n && std::fabs(v.n) < 1e15) {
                 return std::to_string(static_cast<long long>(v.n));
             }
             std::ostringstream oss;

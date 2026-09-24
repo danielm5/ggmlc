@@ -376,6 +376,11 @@ std::string Server::handle_request(const std::string& method, const std::string&
                     msg.find("no GGUF catalogued") != std::string::npos) {
                     return http_error(400, "invalid_request_error", msg, "model");
                 }
+                // Too many options for this model's compiled graph is a caller error,
+                // not an internal fault.
+                if (msg.find("laya.max_opts") != std::string::npos) {
+                    return http_error(422, "invalid_request_error", msg, "questions");
+                }
                 return http_error(500, "internal_error", msg);
             }
             auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -435,6 +440,9 @@ std::string Server::handle_request(const std::string& method, const std::string&
             if (msg.find("unknown model") != std::string::npos ||
                 msg.find("no GGUF catalogued") != std::string::npos) {
                 return http_error(400, "invalid_request_error", msg, "model");
+            }
+            if (msg.find("laya.max_opts") != std::string::npos) {
+                return http_error(422, "invalid_request_error", msg, "questions");
             }
             return http_error(500, "internal_error", msg);
         }

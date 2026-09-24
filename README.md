@@ -94,6 +94,8 @@ graph TD
 
 ## 📰 News
 
+**Sep 24, 2026 — TimesFM 3.0 and PlaidQ GGUFs are public.** Downloadable ggmlc GGUFs for Google [TimesFM 3.0](https://huggingface.co/mys/timesfm-3.0-GGUF) (F16, Q8_0, Q4_0, UD_Q4_K_M) and [PlaidQ](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF) tab completion (F16, Q8_0, UD_Q4_K_M) are on Hugging Face. These are not llama.cpp GGUFs — run them with the standalone `timesfm` / `tab_completion` binaries from GitHub releases. Details: [`examples/timesfm`](examples/timesfm/README.md) and [`examples/tab_completion`](examples/tab_completion/README.md).
+
 **Sep 22, 2026 — `laya` runs Kev.** The same standalone binary scores [Kev](https://github.com/jaredpalmer/kev) 0.5B, 0.8B, and 4B: typed `choice` / `score` / `noul` questions in one forward. The same single-binary executable can run and serve both **laya** and **kev** models with a Typesafe-compatible API. F16, Q8_0, and UD_Q4_K_M GGUFs are available: [mys/kev-0.5b-GGUF](https://huggingface.co/mys/kev-0.5b-GGUF), [mys/kev-0.8b-GGUF](https://huggingface.co/mys/kev-0.8b-GGUF), [mys/kev-4b-GGUF](https://huggingface.co/mys/kev-4b-GGUF). CLI and presets: [`examples/laya`](examples/laya/README.md).
 
 **Sep 20, 2026 — ggmlc can Laya.** Compile [Laya](https://huggingface.co/convaiinnovations/laya), the open-source alternative to TypeSafe Jev, into a standalone C++ System 1 engine: typed `choice` / `score` / `noul` questions scored in one encoder pass — no generated tokens. English ModernBERT-large, mmBERT multilingual, and the typed-decisions specialist ship as F16 / Q8_0 / UD_Q4_K_M GGUFs. On an RTX 4050 Laptop, **~25 ms** per decision and **~143 ms** for a 7-question email preset. Details, CLI, and downloads: [`examples/laya`](examples/laya/README.md).
@@ -540,10 +542,12 @@ pytest -v
    - 100% offline continuous latent diffusion code autocompletion engine powered by **PlaidQ**.
    - Pure mathematical Fill-In-The-Middle (FIM) without prompt tagging hacks.
    - Non-causal bidirectional transformer trunk, static 256-canvas CUDA Graph capture, OpenMP parallel hole-selective sampler, and persistent JSON-RPC IDE daemon (`daemon`).
+   - GGUFs (F16, Q8_0, UD_Q4_K_M): [mys/plaidq-0.7b-16step-GGUF](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF).
 3. **[Google TimesFM 3.0 Foundation Forecaster (`examples/timesfm`)](examples/timesfm/README.md)**:
    - Standalone zero-dependency C++ engine for Google TimesFM 3.0 foundation time-series forecasting.
    - 20-layer mixing transformer with Pax-style normalization, RoPE, and dynamic sequence dimensions.
    - Statistical domain suite: RevIN normalization, linear detrending ($R^2 \ge 0.5$), quantile monotonicity sorting, rolling backtesting engine with calibration scoring (`coverage_80`, `coverage_40`, `naive_mae_ratio`), multi-band SVG visualizer, and single-binary embedded Web Studio & REST API (`serve`).
+   - GGUFs (F16, Q8_0, Q4_0, UD_Q4_K_M): [mys/timesfm-3.0-GGUF](https://huggingface.co/mys/timesfm-3.0-GGUF).
 
 ---
 

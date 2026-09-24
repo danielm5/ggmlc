@@ -73,6 +73,15 @@ jobs:
             backend: cuda
             cuda_arch: "89"
 
+          # Vulkan (no GPU required to compile; shaders are built with glslc)
+          - name: linux-x86_64-vulkan
+            os: ubuntu-22.04
+            backend: vulkan
+
+          - name: windows-x86_64-vulkan
+            os: windows-2022
+            backend: vulkan
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -107,6 +116,24 @@ jobs:
           cuda: '12.4.1'
           method: 'network'
 
+      - name: Install Vulkan SDK (Linux)
+        if: runner.os == 'Linux' && matrix.backend == 'vulkan'
+        run: |
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/lunarg-vulkan.gpg
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential vulkan-sdk libssl-dev
+
+      - name: Install Vulkan SDK (Windows)
+        if: runner.os == 'Windows' && matrix.backend == 'vulkan'
+        env:
+          VULKAN_VERSION: 1.4.357.0
+        run: |
+          curl.exe -o $env:RUNNER_TEMP/VulkanSDK-Installer.exe -L "https://sdk.lunarg.com/sdk/download/${env:VULKAN_VERSION}/windows/vulkansdk-windows-X64-${env:VULKAN_VERSION}.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\${env:VULKAN_VERSION}"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${env:VULKAN_VERSION}\bin"
+
       # Configure CMake
       - name: Configure CMake (macOS Metal)
         if: matrix.backend == 'metal'
@@ -137,6 +164,22 @@ jobs:
             -DGGMLC_BUILD_EXAMPLES=ON \
             -DCMAKE_CUDA_ARCHITECTURES=${{ matrix.cuda_arch }} \
             -DCMAKE_CUDA_RUNTIME_LIBRARY=Static
+
+      - name: Configure CMake (Linux Vulkan)
+        if: runner.os == 'Linux' && matrix.backend == 'vulkan'
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGMLC_ENABLE_VULKAN=ON \
+            -DGGMLC_BUILD_EXAMPLES=ON
+
+      - name: Configure CMake (Windows Vulkan)
+        if: runner.os == 'Windows' && matrix.backend == 'vulkan'
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGMLC_ENABLE_VULKAN=ON `
+            -DGGMLC_BUILD_EXAMPLES=ON
 
       # Build Targets
       - name: Build Binaries (ggmlc-run, tab_completion, timesfm, laya)
