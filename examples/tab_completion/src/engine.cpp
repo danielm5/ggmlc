@@ -4,6 +4,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cstring>
+#include <cstdlib>
 
 namespace tab_completion {
 
@@ -100,7 +101,37 @@ bool TabCompletionEngine::load_model(
         std::cerr << "[TabCompletion] Warning: embedding_matrix not found in GGUF; initialized to zeros." << std::endl;
     }
 
+    std::vector<float> schedule_t;
+    std::vector<float> schedule_g;
+    int64_t k_st = gguf_find_key(gguf_ctx, "plaidq.schedule_t");
+    int64_t k_sg = gguf_find_key(gguf_ctx, "plaidq.schedule_g");
+    if (k_st >= 0 && k_sg >= 0 &&
+        gguf_get_kv_type(gguf_ctx, k_st) == GGUF_TYPE_ARRAY &&
+        gguf_get_kv_type(gguf_ctx, k_sg) == GGUF_TYPE_ARRAY &&
+        gguf_get_arr_type(gguf_ctx, k_st) == GGUF_TYPE_FLOAT32 &&
+        gguf_get_arr_type(gguf_ctx, k_sg) == GGUF_TYPE_FLOAT32) {
+        const size_t n_t = gguf_get_arr_n(gguf_ctx, k_st);
+        const size_t n_g = gguf_get_arr_n(gguf_ctx, k_sg);
+        if (n_t >= 2 && n_t == n_g) {
+            const float* t_data = static_cast<const float*>(gguf_get_arr_data(gguf_ctx, k_st));
+            const float* g_data = static_cast<const float*>(gguf_get_arr_data(gguf_ctx, k_sg));
+            schedule_t.assign(t_data, t_data + n_t);
+            schedule_g.assign(g_data, g_data + n_g);
+        }
+    }
+
     gguf_free(gguf_ctx);
+
+    // F16 cuBLAS tensor-core GEMMs NaN the vocab-sized head on Ada.
+    // FP32 accumulate matches the CPU forward. Quantized matmuls stay on MMQ.
+    if ((device == "cuda" || device.rfind("cuda", 0) == 0) &&
+        std::getenv("GGML_CUDA_CUBLAS_COMPUTE_TYPE") == nullptr) {
+#if defined(_WIN32)
+        _putenv_s("GGML_CUDA_CUBLAS_COMPUTE_TYPE", "f32");
+#else
+        setenv("GGML_CUDA_CUBLAS_COMPUTE_TYPE", "f32", 0);
+#endif
+    }
 
     // 4. Load graph and initialize ModelExecutor
     try {
@@ -132,6 +163,10 @@ bool TabCompletionEngine::load_model(
     // 5. Initialize Managers
     infilling_mgr_ = std::make_unique<InfillingManager>(canvas_len_, embed_dim_, eos_token_id_, pad_token_id_);
     sampler_ = std::make_unique<DiffusionSampler>(gamma_0_, gamma_1_);
+    if (!schedule_t.empty()) {
+        std::cerr << "[TabCompletion] Using learned noise schedule (" << schedule_t.size() << " knots)." << std::endl;
+        sampler_->set_normalized_schedule(std::move(schedule_t), std::move(schedule_g));
+    }
 
     model_loaded_ = true;
     std::cerr << "[TabCompletion] PlaidQ Tab Completion Engine ready!" << std::endl;

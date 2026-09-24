@@ -23,6 +23,10 @@ public:
     // Compute log-SNR gamma from normalized time t in [0.0, 1.0]
     float gamma_from_t(float t) const;
 
+    // Learned noise schedule: t ascending in [0, 1], g = s(t) in [0, 1].
+    // Absent schedule keeps the linear map g(t) = t.
+    void set_normalized_schedule(std::vector<float> t, std::vector<float> g);
+
     // Generate time pairs (t, s) for n_steps
     std::vector<std::pair<float, float>> get_time_schedule(int n_steps) const;
 
@@ -70,6 +74,11 @@ public:
 private:
     float gamma_0_;
     float gamma_1_;
+    std::vector<float> schedule_t_;
+    std::vector<float> schedule_g_;
+
+    float normalized_gamma(float t) const;
+    float time_at_normalized_gamma(float g) const;
 
     static inline float sigmoid(float x) {
         return 1.0f / (1.0f + std::exp(-x));
