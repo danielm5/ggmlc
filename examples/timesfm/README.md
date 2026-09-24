@@ -4,6 +4,23 @@ A zero-dependency, high-performance C++ implementation of **Google TimesFM 3.0**
 
 ---
 
+## Download (recommended)
+
+### GGUF weights
+
+Pre-compiled TimesFM 3.0 GGUFs (**F16**, **Q8_0**, **UD_Q4_K_M**, **Q4_0**) are published at [mys/timesfm-3.0-GGUF](https://huggingface.co/mys/timesfm-3.0-GGUF).
+
+These are **ggmlc** artifacts (not llama.cpp). Prefer **F16** / **Q8_0** / **UD_Q4_K_M** for closest doctor parity. Plain **Q4_0** is the smallest (~179 MB); larger forecast deviation vs F16 is **expected** for this continuous forecaster (not an LLM logits-over-vocab setup) — `doctor` may miss the weekly-retail sMAPE gate by a thin margin while F16/Q8/UD pass.
+
+```powershell
+# huggingface-cli download mys/timesfm-3.0-GGUF timesfm3_f16.gguf --local-dir scratch
+# huggingface-cli download mys/timesfm-3.0-GGUF timesfm3_ud_q4_k_m.gguf --local-dir scratch
+```
+
+Or compile locally with `examples/timesfm/compile_timesfm.py` (`--quantize f16` / `q8_0` / `ud_q4_k_m` / `q4_0`).
+
+---
+
 ## Key Highlights
 
 - **100% Offline & Framework-Free**: Runs natively in pure C++ on CPU (AVX2/FMA GEMV microkernels) and NVIDIA GPUs (CUDA stream & tensor execution) without Python, PyTorch, or LibTorch.
@@ -11,9 +28,11 @@ A zero-dependency, high-performance C++ implementation of **Google TimesFM 3.0**
   - 20 Mixing Transformer layers ($1280$ hidden dim, $16$ heads, $80$ head dim)
   - RoPE positional embeddings, QK-RMSNorm, Pax-style `PerDimScale`, and cross-variate attention
   - Dynamic patching ($32 \to 64$ patch mapping)
-- **Production Quantization Schemes**:
+- **Production Quantization Schemes** ([download](https://huggingface.co/mys/timesfm-3.0-GGUF)):
   - `F16`: Full precision weights (~$632$ MB)
-  - `Q4_0`: 4-bit block quantization (~$178$ MB, **3.5x memory reduction**)
+  - `Q8_0`: ~$336$ MB, strong doctor parity vs F16
+  - `UD_Q4_K_M`: Unsloth-dynamic Q4_K_M (~$304$ MB), preferred 4-bit
+  - `Q4_0`: ~$179$ MB (**3.5x** vs F16); expect larger sMAPE drift on some presets
 - **Full Domain Math & Statistical Calibration Suite**:
   - **Empirical Quantile Interval Coverage**: Scored against held-out actuals for both 80% ($q_{0.10} \dots q_{0.90}$) and 40% ($q_{0.30} \dots q_{0.70}$) intervals to evaluate probabilistic calibration.
   - **MAE vs. Naive Baseline Skill Ratio**: Compares TimesFM error against the persistence naive baseline ($y_{t+h} = y_t$). Ratios $< 1.0$ quantitatively prove the model outperforms persistence.

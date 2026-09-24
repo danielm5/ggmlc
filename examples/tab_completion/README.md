@@ -6,6 +6,22 @@ Developed as part of the `ggmlc` compiler project to dogfood C++ code generation
 
 ---
 
+## Download (recommended)
+
+### GGUF weights
+
+Pre-compiled PlaidQ 0.7B (16-step) GGUFs (**F16**, **Q8_0**, **UD_Q4_K_M**) are published at [mys/plaidq-0.7b-16step-GGUF](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF).
+
+```powershell
+# huggingface-cli download mys/plaidq-0.7b-16step-GGUF plaidq_0.7b_16step_ud_q4_k_m.gguf --local-dir scratch
+# huggingface-cli download mys/plaidq-0.7b-16step-GGUF plaidq_0.7b_16step_q8_0.gguf --local-dir scratch
+# huggingface-cli download mys/plaidq-0.7b-16step-GGUF plaidq_0.7b_16step_f16.gguf --local-dir scratch
+```
+
+Or compile locally with `examples/tab_completion/compile_plaidq.py` (`--quantize f16` / `q8_0` / `ud_q4_k_m`).
+
+---
+
 ## Key Features
 
 1. **Continuous Latent Diffusion Architecture**:
@@ -20,15 +36,14 @@ Developed as part of the `ggmlc` compiler project to dogfood C++ code generation
    - **CPU**: Hand-tuned AVX2/FMA GEMV microkernels with OpenMP multi-threading.
    - **NVIDIA CUDA**: Unified `CUDAGraphManager` and Driver-VMM virtual memory page mapping, supporting all Compute Capabilities $\ge 6.0$ (Pascal through Blackwell). Static 256-token canvas captured into a single `cudaGraph_t` stream launch.
    - **Apple Metal**: Native Metal backend via `-DENABLE_METAL=ON` linking Apple `Foundation`, `Metal`, and `MetalKit`.
-4. **Hole-Selective & Parallel Sampler**:
-   - Computes Softmax and codebook projections $\hat{x}_0 = \text{Softmax}(S) @ E$ selectively only over active hole tokens $[P, P+H)$, skipping 224 invariant prefix/suffix tokens ($8\times$ reduction in host FLOPs).
-   - Fully parallelized across CPU cores with `#pragma omp parallel for`.
+4. **Full-Canvas Softmax Reconstruction**:
+   - Computes Softmax and codebook projections $\hat{x}_0 = \text{Softmax}(S) @ E$ over every mutable canvas position (prefix/suffix stay pinned). Restricting x0 to the hole budget alone leaves the tail at zero and poisons bidirectional attention.
 5. **IDE Daemon Mode (`daemon`)**:
    - High-throughput newline-delimited JSON-RPC interface over `stdin`/`stdout` for zero-overhead integration with VS Code, Cursor, Neovim, and Antigravity IDE extensions.
 6. **Multiple Quantization Schemes**:
-   - **FP16**: Full floating-point precision for reference parity and high-accuracy code infilling.
-   - **Q4_0**: Ultra-compact 4-bit block quantization slashing memory footprint down to ~400 MB for lightweight background execution.
-   - **Unsloth Dynamic & Q4_K_M**: Selective role-based quantization keeping embedding and attention projections in F16 while quantizing MLP projections to Q4, with strict 1D F32 preservation.
+   - **FP16**: Full floating-point precision for reference parity and high-accuracy code infilling ([download](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF)).
+   - **Q8_0**: Compact 8-bit weights (~740 MB) with strong smoke parity to F16 ([download](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF)).
+   - **UD_Q4_K_M**: Unsloth-dynamic Q4_K_M (~600 MB) published alongside F16/Q8 ([download](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF)).
 
 ---
 
@@ -81,7 +96,7 @@ cmake --build build-metal --target tab_completion -j8
 ### 1. Standalone Code Autocompletion (8-Step High Quality)
 ```bash
 tab_completion complete \
-  --model scratch/plaidq_0.7b_16step_q4_0.gguf \
+  --model scratch/plaidq_0.7b_16step_f16.gguf \
   --steps 8 \
   --score-temp 0.5 \
   --prefix "def quicksort(arr):\n    if len(arr) <= 1:\n        return arr\n    pivot = arr[0]\n    " \
@@ -93,7 +108,7 @@ tab_completion complete \
 ### 2. Full 16-Step Maximum Convergence
 ```bash
 tab_completion complete \
-  --model scratch/plaidq_0.7b_16step_q4_0.gguf \
+  --model scratch/plaidq_0.7b_16step_f16.gguf \
   --steps 16 \
   --score-temp 0.5 \
   --prefix "def quicksort(arr):\n    " \
@@ -104,7 +119,7 @@ tab_completion complete \
 ### 3. IDE Daemon Server (`daemon`)
 Run the persistent background process in your IDE extension:
 ```bash
-tab_completion daemon scratch/plaidq_0.7b_16step_q4_0.gguf --steps 8 --device cuda
+tab_completion daemon scratch/plaidq_0.7b_16step_q8_0.gguf --steps 8 --device cuda
 ```
 
 #### JSON-RPC Interface Protocol:
@@ -127,7 +142,7 @@ tab_completion daemon scratch/plaidq_0.7b_16step_q4_0.gguf --steps 8 --device cu
 
 ## Empirical Latency & Throughput Measurements
 
-Benchmarked on **NVIDIA GeForce GTX 1050 (4GB VRAM)** and **Intel CPU (4 Threads)** with canvas length $L = 256$ and infill hole $H = 32$ tokens across model quantizations and sampling step budgets:
+Benchmarked on **NVIDIA GeForce GTX 1050 (4GB VRAM)** and **Intel CPU (4 Threads)** with canvas length $L = 256$ and infill hole $H = 32$ tokens across model quantizations and sampling step budgets. Public HF artifacts are **F16**, **Q8_0**, and **UD_Q4_K_M** at [mys/plaidq-0.7b-16step-GGUF](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF); rows labeled `Q4_0` below are historical local builds.
 
 | Model / Configuration | Steps ($N$) | Precision | Model Size | Hardware | Total Latency | Compute Pass | Infill Rate | Usability / Quality |
 | :--- | :---: | :--- | :---: | :--- | :---: | :---: | :---: | :--- |

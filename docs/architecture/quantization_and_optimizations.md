@@ -38,7 +38,8 @@ graph LR
 
 4. **`DeadCodeEliminationPass` (`python/ggmlc/transforms/dce.py`)**:
    - Performs backward reachability traversal from designated graph roots: `graph.outputs` and `graph.states` (persistent state tensors like KV caches).
-   - Prunes unreferenced operations, orphan activation tensors, and dead control-flow branches.
+   - Always keeps `StorageClass.INPUT` / `STATE`, plus tensors marked `export_required` (Module parameters/buffers that `torch.export` lifted with zero FX users — host-consumed sidecars such as PlaidQ's `embedding_matrix` codebook).
+   - Prunes unreferenced operations, orphan activations, and ordinary unused PARAMETER/CONSTANT weights (including gammas absorbed by RMS/affine bake).
 
 5. **`OperatorFusionPass` (`python/ggmlc/transforms/fusion.py`)**:
    - Pattern matches composite operator sequences and replaces them with unified operations:
