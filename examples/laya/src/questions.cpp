@@ -156,6 +156,9 @@ float confidence_from_probs(const std::vector<float>& p) {
         ent -= x * std::log(x);
     }
     double c = 1.0 - ent / std::log(static_cast<double>(k));
+    // Comparisons against NaN are all false, so the clamps below silently passed a NaN
+    // straight through to the response. Treat a non-finite entropy as zero confidence.
+    if (!std::isfinite(c)) return 0.0f;
     if (c < 0.0) c = 0.0;
     if (c > 1.0) c = 1.0;
     return static_cast<float>(c);
@@ -169,14 +172,35 @@ std::string temp_bucket(QType t, int k) {
 std::vector<float> softmax_temp(const std::vector<float>& logits, float temperature) {
     const float t = std::max(temperature, 1e-3f);
     std::vector<float> z = logits;
-    float m = z.empty() ? 0.0f : z[0];
+    if (z.empty()) return z;
+
+    // A single non-finite logit used to poison the whole distribution: max() with a
+    // NaN returns the NaN, exp(NaN) is NaN, and the `sum <= 0.0` guard below is FALSE
+    // for NaN, so every probability came out NaN. Detect it up front and fall back to
+    // a uniform distribution, which is the honest answer for "the forward produced
+    // nothing usable" and keeps confidence well defined.
+    for (float v : z) {
+        if (!std::isfinite(v)) {
+            const float u = 1.0f / static_cast<float>(z.size());
+            for (float& w : z) w = u;
+            return z;
+        }
+    }
+
+    float m = z[0];
     for (float v : z) m = std::max(m, v);
     double sum = 0.0;
     for (float& v : z) {
         v = static_cast<float>(std::exp((v - m) / t));
         sum += v;
     }
-    if (sum <= 0.0) sum = 1.0;
+    // Underflow (every exp() rounded to zero) leaves sum at 0; uniform again rather
+    // than dividing by a fabricated 1.0, which silently returned all-zero "probabilities".
+    if (!(sum > 0.0) || !std::isfinite(sum)) {
+        const float u = 1.0f / static_cast<float>(z.size());
+        for (float& w : z) w = u;
+        return z;
+    }
     for (float& v : z) v = static_cast<float>(v / sum);
     return z;
 }
