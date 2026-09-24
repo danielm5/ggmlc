@@ -262,27 +262,22 @@ SerializedModelGraph ModelLoader::load_from_file(const std::string& filepath) {
     std::streamsize size = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    std::vector<uint8_t> buffer(size);
-    if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+    auto storage = std::make_shared<std::vector<uint8_t>>(size);
+    if (!file.read(reinterpret_cast<char*>(storage->data()), size)) {
         throw std::runtime_error("Failed to read GGUF file: " + filepath);
     }
 
-    auto graph = load_from_memory(buffer.data(), buffer.size());
-    graph.data_buffer = std::move(buffer);
+    auto graph = load_from_memory(storage->data(), storage->size());
+    graph.data_storage = std::move(storage);
 
-    // Re-bind data_ptr relative to graph.data_buffer
-    struct gguf_init_params params = { true, nullptr };
-    struct gguf_context* ctx = gguf_init_from_buffer(graph.data_buffer.data(), graph.data_buffer.size(), params);
-    if (ctx) {
-        size_t data_offset = gguf_get_data_offset(ctx);
-        const uint8_t* base_data = graph.data_buffer.data() + data_offset;
-        for (auto& pair : graph.tensors) {
-            int64_t t_id = gguf_find_tensor(ctx, pair.second.name.c_str());
-            if (t_id >= 0) {
-                pair.second.data_ptr = base_data + gguf_get_tensor_offset(ctx, t_id);
-            }
+    const uint8_t* base = graph.data_storage->data() + graph.data_offset;
+    for (auto& pair : graph.tensors) {
+        SerializedTensor& t = pair.second;
+        if (t.data_size > 0) {
+            t.data_ptr = base + t.data_offset;
+        } else {
+            t.data_ptr = nullptr;
         }
-        gguf_free(ctx);
     }
 
     return graph;
@@ -380,7 +375,8 @@ SerializedModelGraph ModelLoader::load_from_memory(const uint8_t* data, size_t s
     }
 
     // Tensors
-    size_t data_offset = gguf_get_data_offset(ctx);
+    g.data_offset = gguf_get_data_offset(ctx);
+    size_t data_offset = g.data_offset;
     const uint8_t* tensor_data_base = data + data_offset;
 
     for (const auto& pair : root["tensors"].obj_val) {

@@ -120,6 +120,8 @@ struct SerializedModelGraph {
     std::unordered_map<uint32_t, SerializedTensor> tensors;
     std::vector<SerializedOp> ops;
     std::vector<uint8_t> data_buffer;
+    std::shared_ptr<std::vector<uint8_t>> data_storage;
+    uint64_t data_offset = 0;
 
     // Metadata key-values
     std::unordered_map<std::string, std::string> metadata_str;
@@ -141,9 +143,15 @@ struct SerializedModelGraph {
         metadata_int = other.metadata_int;
         metadata_float = other.metadata_float;
         metadata_str_arr = other.metadata_str_arr;
+        data_storage = other.data_storage;
+        data_offset = other.data_offset;
 
-        if (!data_buffer.empty() && !other.data_buffer.empty()) {
-            ptrdiff_t diff = data_buffer.data() - other.data_buffer.data();
+        const uint8_t* src_base = other.data_storage ? other.data_storage->data()
+            : (!other.data_buffer.empty() ? other.data_buffer.data() : nullptr);
+        const uint8_t* dst_base = data_storage ? data_storage->data()
+            : (!data_buffer.empty() ? data_buffer.data() : nullptr);
+        if (src_base && dst_base && dst_base != src_base) {
+            ptrdiff_t diff = dst_base - src_base;
             for (auto& pair : tensors) {
                 if (pair.second.data_ptr) {
                     pair.second.data_ptr += diff;
@@ -168,9 +176,15 @@ struct SerializedModelGraph {
         metadata_int = other.metadata_int;
         metadata_float = other.metadata_float;
         metadata_str_arr = other.metadata_str_arr;
+        data_storage = other.data_storage;
+        data_offset = other.data_offset;
 
-        if (!data_buffer.empty() && !other.data_buffer.empty()) {
-            ptrdiff_t diff = data_buffer.data() - other.data_buffer.data();
+        const uint8_t* src_base = other.data_storage ? other.data_storage->data()
+            : (!other.data_buffer.empty() ? other.data_buffer.data() : nullptr);
+        const uint8_t* dst_base = data_storage ? data_storage->data()
+            : (!data_buffer.empty() ? data_buffer.data() : nullptr);
+        if (src_base && dst_base && dst_base != src_base) {
+            ptrdiff_t diff = dst_base - src_base;
             for (auto& pair : tensors) {
                 if (pair.second.data_ptr) {
                     pair.second.data_ptr += diff;

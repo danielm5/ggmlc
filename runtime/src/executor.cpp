@@ -392,19 +392,38 @@ void ModelExecutor::init_weights() {
         }
     }
 
-    weight_buffer_ = ggml_backend_alloc_ctx_tensors(ctx_w_, backend_);
-    if (!weight_buffer_) {
-        throw std::runtime_error("Failed to allocate weight buffer on backend (" + device_ + ")");
-    }
+    if (device_ == "cpu" && model_graph_.data_storage != nullptr) {
+        for (const auto& pair : model_graph_.tensors) {
+            uint32_t tid = pair.first;
+            const auto& t = pair.second;
+            if ((t.storage == StorageClass::PARAMETER || t.storage == StorageClass::CONSTANT) && t.is_static() && t.data_ptr && t.data_size > 0) {
+                auto it = weight_tensors_.find(tid);
+                if (it != weight_tensors_.end()) {
+                    struct ggml_tensor* g_t = it->second;
+                    const size_t need = ggml_nbytes(g_t);
+                    if (t.data_size < need) {
+                        throw std::runtime_error("weight data smaller than tensor for: " + t.name);
+                    }
+                    g_t->data = const_cast<uint8_t*>(t.data_ptr);
+                }
+            }
+        }
+        weight_buffer_ = nullptr;
+    } else {
+        weight_buffer_ = ggml_backend_alloc_ctx_tensors(ctx_w_, backend_);
+        if (!weight_buffer_) {
+            throw std::runtime_error("Failed to allocate weight buffer on backend (" + device_ + ")");
+        }
 
-    for (const auto& pair : model_graph_.tensors) {
-        uint32_t tid = pair.first;
-        const auto& t = pair.second;
-        if ((t.storage == StorageClass::PARAMETER || t.storage == StorageClass::CONSTANT) && t.is_static() && t.data_ptr && t.data_size > 0) {
-            auto it = weight_tensors_.find(tid);
-            if (it != weight_tensors_.end()) {
-                size_t sz = std::min<size_t>(t.data_size, ggml_nbytes(it->second));
-                ggml_backend_tensor_set(it->second, t.data_ptr, 0, sz);
+        for (const auto& pair : model_graph_.tensors) {
+            uint32_t tid = pair.first;
+            const auto& t = pair.second;
+            if ((t.storage == StorageClass::PARAMETER || t.storage == StorageClass::CONSTANT) && t.is_static() && t.data_ptr && t.data_size > 0) {
+                auto it = weight_tensors_.find(tid);
+                if (it != weight_tensors_.end()) {
+                    size_t sz = std::min<size_t>(t.data_size, ggml_nbytes(it->second));
+                    ggml_backend_tensor_set(it->second, t.data_ptr, 0, sz);
+                }
             }
         }
     }
