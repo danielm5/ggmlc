@@ -623,24 +623,6 @@ def _lower_op(
         attrs["axis2"] = axes[2]
         attrs["axis3"] = axes[3]
         return GGMLOpDef(op.id, GGMLOpCode.GGML_OP_PERMUTE, in_ids, out_ids, attrs, op.name)
-    elif opcode == OpCode.SLICE:
-        in_t = c_graph.get_tensor(in_ids[0])
-        R = len(in_t.shape.dims)
-        dim = attrs.get("dim", 0)
-        if dim < 0:
-            dim += R
-        ggml_dim = max(0, R - 1 - dim)
-        attrs["ggml_dim"] = ggml_dim
-        return GGMLOpDef(op.id, GGMLOpCode.GGML_OP_VIEW, in_ids, out_ids, attrs, op.name)
-    elif opcode == OpCode.CONCAT:
-        in_t = c_graph.get_tensor(in_ids[0])
-        R = len(in_t.shape.dims)
-        dim = attrs.get("dim", 0)
-        if dim < 0:
-            dim += R
-        ggml_dim = max(0, R - 1 - dim)
-        attrs["ggml_dim"] = ggml_dim
-        return GGMLOpDef(op.id, GGMLOpCode.GGML_OP_CONCAT, in_ids, out_ids, attrs, op.name)
     elif opcode in (OpCode.EXPAND, OpCode.REPEAT):
         return GGMLOpDef(op.id, GGMLOpCode.GGML_OP_REPEAT, in_ids, out_ids, attrs, op.name)
     elif opcode == OpCode.EMBEDDING:

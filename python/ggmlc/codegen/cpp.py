@@ -247,6 +247,15 @@ class GGMLCCppCodeGenerator:
                 lines.append(
                     f"    tensors[{out_id}] = ggml_mul_mat(ctx, {inp_vars[0]}, {inp_vars[1]});"
                 )
+            b_arg = inp_vars[2] if len(inp_vars) > 2 else "nullptr"
+            if b_arg != "nullptr":
+                lines.append(f"    struct ggml_tensor* b_{node.id} = {b_arg};")
+                lines.append(
+                    f"    if (!ggml_is_contiguous(b_{node.id})) b_{node.id} = ggml_cont(ctx, b_{node.id});"
+                )
+                lines.append(
+                    f"    tensors[{out_id}] = ggml_add(ctx, tensors[{out_id}], b_{node.id});"
+                )
         elif node.opcode == GGMLOpCode.GGML_OP_UNARY:
             u_type = node.attributes.get("unary_op", "gelu")
             u_str = str(u_type).lower()
@@ -349,17 +358,33 @@ class GGMLCCppCodeGenerator:
         elif node.opcode == GGMLOpCode.GGML_OP_SOFT_MAX:
             lines.append(f"    tensors[{out_id}] = ggml_soft_max(ctx, {inp_vars[0]});")
         elif node.opcode == GGMLOpCode.GGML_OP_REPEAT:
-            lines.append(f"    tensors[{out_id}] = ggml_repeat(ctx, {inp_vars[0]}, {inp_vars[1]});")
+            if len(inp_vars) == 1:
+                out_t = self.graph.tensors[out_id]
+                ne_strs = [_dim_to_cpp_expr(d) for d in out_t.ne]
+                lines.append(
+                    f"    tensors[{out_id}] = ggml_repeat_4d(ctx, {inp_vars[0]}, {', '.join(ne_strs)});"
+                )
+            else:
+                lines.append(
+                    f"    tensors[{out_id}] = ggml_repeat(ctx, {inp_vars[0]}, {inp_vars[1]});"
+                )
         elif node.opcode == GGMLOpCode.GGML_OP_RESHAPE:
             out_t = self.graph.tensors[out_id]
             ne_strs = [_dim_to_cpp_expr(d) for d in out_t.ne]
+            lines.append(f"    struct ggml_tensor* idx_{node.id} = {inp_vars[0]};")
             lines.append(
-                f"    tensors[{out_id}] = ggml_reshape_4d(ctx, {inp_vars[0]}, {', '.join(ne_strs)});"
+                f"    if (!ggml_is_contiguous(idx_{node.id})) idx_{node.id} = ggml_cont(ctx, idx_{node.id});"
+            )
+            lines.append(
+                f"    tensors[{out_id}] = ggml_reshape_4d(ctx, idx_{node.id}, {', '.join(ne_strs)});"
             )
         elif node.opcode == GGMLOpCode.GGML_OP_PERMUTE:
-            ax = node.attributes.get("axes", [0, 1, 2, 3])
-            while len(ax) < 4:
-                ax.append(len(ax))
+            ax = [
+                node.attributes.get("axis0", 0),
+                node.attributes.get("axis1", 1),
+                node.attributes.get("axis2", 2),
+                node.attributes.get("axis3", 3),
+            ]
             lines.append(
                 f"    tensors[{out_id}] = ggml_permute(ctx, {inp_vars[0]}, {ax[0]}, {ax[1]}, {ax[2]}, {ax[3]});"
             )
@@ -456,7 +481,9 @@ class GGMLCCppCodeGenerator:
         elif node.opcode == GGMLOpCode.GGML_OP_VIEW:
             out_t = self.graph.tensors[out_id]
             ne_strs = [_dim_to_cpp_expr(d) for d in out_t.ne]
-            offset = node.attributes.get("offset", 0)
+            start = node.attributes.get("start", 0)
+            ggml_dim = node.attributes.get("ggml_dim", 0)
+            offset = f"{start} * {inp_vars[0]}->nb[{ggml_dim}]"
             lines.append(
                 f"    tensors[{out_id}] = ggml_view_4d(ctx, {inp_vars[0]}, {', '.join(ne_strs)}, {inp_vars[0]}->nb[1], {inp_vars[0]}->nb[2], {inp_vars[0]}->nb[3], {offset});"
             )
