@@ -147,10 +147,14 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
         shape = _torch_shape_to_shape(val.shape)
         dtype = DType.from_torch(val.dtype)
 
-        # torch.export lifts every Module parameter/buffer as a placeholder, even
-        # when the FX node has zero users (host-consumed sidecars like PlaidQ's
-        # embedding_matrix). Mark those so DCE does not treat them as dead weights.
+        # torch.export lifts every Module parameter/buffer as a placeholder.
+        # Unused params (zero FX users) are host sidecars — mark export_required.
+        # Module buffers are also kept even when FX still has users: those users
+        # are often dead after specialization (PlaidQ return_reconst=False still
+        # builds output_embedding = cat(E, E.detach()) then discards it), and
+        # DCE would otherwise drop the codebook the C++ host needs.
         unused_module_state = len(node.users) == 0
+        is_lifted_buffer = target_name in lifted_buffers or target_name in lifted_constants
 
         if target_name in lifted_params:
             param_name = lifted_params[target_name]
@@ -180,7 +184,7 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
             )
             g.parameters.append(t.id)
             param_ptrs[ptr] = (t, param_tensor)
-        elif target_name in lifted_buffers or target_name in lifted_constants:
+        elif is_lifted_buffer:
             buf_name = lifted_buffers.get(target_name, lifted_constants.get(target_name))
             buf_tensor = ep.constants.get(
                 buf_name,
@@ -195,8 +199,8 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                     and buf_tensor.stride() == existing_param.stride()
                     and buf_tensor.dtype == existing_param.dtype
                 ):
-                    if not unused_module_state:
-                        existing_t.export_required = False
+                    # Never clear export_required on Module buffers (see above).
+                    existing_t.export_required = True
                     node_to_tensor[node] = existing_t
                     name_to_tensor[node.name] = existing_t
                     continue
@@ -210,7 +214,7 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                 storage=StorageClass.CONSTANT,
                 data=data,
                 role="constant",
-                export_required=unused_module_state,
+                export_required=True,
             )
             g.parameters.append(t.id)
             if ptr is not None and buf_tensor is not None:

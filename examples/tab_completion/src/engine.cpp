@@ -253,10 +253,14 @@ CompletionResult TabCompletionEngine::complete(
             const float* logits = forward_model(z_t.data(), gamma_t, x_selfcond.data(), options.n_threads);
             if (!logits) break;
 
-            // Compute x_reconst = softmax(logits) @ E only for active hole positions
+            // Softmax @ E over every mutable canvas position. Restricting this to
+            // the hole budget leaves the tail as x0=0; bidirectional attention then
+            // poisons the hole (smoke collapsed to "777..."). Suffix/prefix stays
+            // pinned separately via pin_clean_latents.
+            const int mutable_end = canvas_len_ - ctx.suffix_len;
             sampler_->compute_x_reconst_from_logits(
                 logits, embedding_matrix_.data(), canvas_len_, vocab_size_, embed_dim_, x_reconst.data(),
-                ctx.prefix_len, ctx.prefix_len + ctx.hole_len
+                ctx.prefix_len, mutable_end
             );
 
             // Pin clean prefix and suffix before DDIM proposal

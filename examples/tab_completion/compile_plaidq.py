@@ -107,14 +107,28 @@ def load_denoiser() -> tuple[Denoiser, dict]:
         codebook = modules["embedding_matrix"]().detach().float().contiguous()
         gamma_0 = float(modules["gamma_bounds"].gamma_0.detach())
         gamma_1 = float(modules["gamma_bounds"].gamma_1.detach())
+    # NoiseSchedule.forward casts weights to float64 but builds endpoint
+    # tensors as float32 (torch.tensor([0.])), which breaks on current PyTorch.
+    # Evaluate s(t) with matching dtypes here so the GGUF schedule knots match
+    # the checkpoint (same math as plaidq.schedule.NoiseSchedule).
     schedule_t = np.linspace(0.0, 1.0, 129, dtype=np.float64)
     with torch.no_grad():
+        ns = modules["noise_schedule"]
+        W1 = F.softplus(ns.W1.double())
+        W2 = 0.01 * F.softplus(ns.W2.double())
+        b1 = ns.b1.double()
+
+        def _gamma_tilde(t: torch.Tensor) -> torch.Tensor:
+            h = t[:, None].double() - 0.5
+            h = (h @ W1.T) + b1[None, :]
+            h = torch.tanh(h)
+            return (h @ W2.T)[:, 0]
+
+        t_torch = torch.tensor(schedule_t, dtype=torch.float64)
+        g0 = _gamma_tilde(torch.tensor([0.0], dtype=torch.float64))
+        g1 = _gamma_tilde(torch.tensor([1.0], dtype=torch.float64))
         schedule_g = (
-            modules["noise_schedule"](torch.tensor(schedule_t, dtype=torch.float64))
-            .detach()
-            .double()
-            .cpu()
-            .numpy()
+            ((_gamma_tilde(t_torch) - g0) / (g1 - g0)).detach().cpu().numpy()
         )
     print(
         "qwen3",
@@ -178,7 +192,7 @@ def compile_one(quantize: str, output: Path | None) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compile PlaidQ 0.7B 16-step to GGUF.")
-    parser.add_argument("--quantize", default="q4_0", choices=QUANT_CHOICES)
+    parser.add_argument("--quantize", default="f16", choices=QUANT_CHOICES)
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
     compile_one(args.quantize, Path(args.output) if args.output else None)
