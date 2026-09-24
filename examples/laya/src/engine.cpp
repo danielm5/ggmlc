@@ -311,6 +311,19 @@ DecideResult DecisionEngine::decide(const JsonValue& state, const std::vector<Qu
     int max_live = 0;
     for (const auto& q : questions) {
         EncodedQuestion enc = build_sequence(tokenizer_, recipe_, state_text, q);
+        // The compiled graph has exactly max_opts marker slots. pad_encoded_batch silently
+        // truncated a longer option list to that many, while the readback below still
+        // trusted markers.size() and walked that many floats out of a max_opts-wide row --
+        // reading into the next row and past the end of the logits buffer. That produced
+        // garbage (often NaN) probabilities indistinguishable from real answers, plus a
+        // strong bias toward option 1. Refuse the request rather than guess.
+        if (static_cast<int>(enc.markers.size()) > seq_.max_opts) {
+            throw std::runtime_error(
+                "question '" + q.id + "' has " + std::to_string(enc.markers.size()) +
+                " options but this model supports at most " + std::to_string(seq_.max_opts) +
+                " (laya.max_opts); split the question or recompile the GGUF with a"
+                " larger max_opts");
+        }
         tokens += static_cast<int>(enc.ids.size());
         max_live = std::max(max_live, static_cast<int>(enc.ids.size()));
         encs.push_back(std::move(enc));
@@ -360,7 +373,10 @@ DecideResult DecisionEngine::decide(const JsonValue& state, const std::vector<Qu
                     const int opts = seq_.max_opts;
                     for (int j = 0; j < take; ++j) {
                         const int qi = idxs[cursor + j];
-                        const int k = static_cast<int>(encs[qi].markers.size());
+                        // Never read more than the row actually holds: the logits row is
+                        // opts wide, so clamping here keeps a stale or oversized option
+                        // list from walking into the next row / off the end of the buffer.
+                        const int k = std::min(static_cast<int>(encs[qi].markers.size()), opts);
                         const float* lp = logits.data() + static_cast<size_t>(j) * opts;
                         const float* ap = (act.size() >= static_cast<size_t>(j + 1) * 2)
                             ? act.data() + static_cast<size_t>(j) * 2
