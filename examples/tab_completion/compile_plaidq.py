@@ -127,9 +127,7 @@ def load_denoiser() -> tuple[Denoiser, dict]:
         t_torch = torch.tensor(schedule_t, dtype=torch.float64)
         g0 = _gamma_tilde(torch.tensor([0.0], dtype=torch.float64))
         g1 = _gamma_tilde(torch.tensor([1.0], dtype=torch.float64))
-        schedule_g = (
-            ((_gamma_tilde(t_torch) - g0) / (g1 - g0)).detach().cpu().numpy()
-        )
+        schedule_g = ((_gamma_tilde(t_torch) - g0) / (g1 - g0)).detach().cpu().numpy()
     print(
         "qwen3",
         metadata.qwen3_size,
