@@ -10,16 +10,15 @@ Developed as part of the `ggmlc` compiler project to dogfood C++ code generation
 
 ### GGUF weights
 
-Pre-compiled PlaidQ 0.7B (16-step) GGUFs (**F16**, **Q8_0**) are published at [mys/plaidq-0.7b-16step-GGUF](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF).
-
-**Q4_0 is not released** — it is unusable for this model (D=16 codebook) and should not be used as a public artifact.
+Pre-compiled PlaidQ 0.7B (16-step) GGUFs (**F16**, **Q8_0**, **UD_Q4_K_M**) are published at [mys/plaidq-0.7b-16step-GGUF](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF).
 
 ```powershell
+# huggingface-cli download mys/plaidq-0.7b-16step-GGUF plaidq_0.7b_16step_ud_q4_k_m.gguf --local-dir scratch
 # huggingface-cli download mys/plaidq-0.7b-16step-GGUF plaidq_0.7b_16step_q8_0.gguf --local-dir scratch
 # huggingface-cli download mys/plaidq-0.7b-16step-GGUF plaidq_0.7b_16step_f16.gguf --local-dir scratch
 ```
 
-Or compile locally with `examples/tab_completion/compile_plaidq.py` (`--quantize f16` / `q8_0`).
+Or compile locally with `examples/tab_completion/compile_plaidq.py` (`--quantize f16` / `q8_0` / `ud_q4_k_m`).
 
 ---
 
@@ -44,7 +43,7 @@ Or compile locally with `examples/tab_completion/compile_plaidq.py` (`--quantize
 6. **Multiple Quantization Schemes**:
    - **FP16**: Full floating-point precision for reference parity and high-accuracy code infilling ([download](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF)).
    - **Q8_0**: Compact 8-bit weights (~740 MB) with strong smoke parity to F16 ([download](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF)).
-   - **Unsloth Dynamic / Q4_K_M** (experimental): role-based quant for local builds. Plain **Q4_0 is not released** (unusable for this model’s D=16 codebook).
+   - **UD_Q4_K_M**: Unsloth-dynamic Q4_K_M (~600 MB) published alongside F16/Q8 ([download](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF)).
 
 ---
 
@@ -143,7 +142,7 @@ tab_completion daemon scratch/plaidq_0.7b_16step_q8_0.gguf --steps 8 --device cu
 
 ## Empirical Latency & Throughput Measurements
 
-Benchmarked on **NVIDIA GeForce GTX 1050 (4GB VRAM)** and **Intel CPU (4 Threads)** with canvas length $L = 256$ and infill hole $H = 32$ tokens across model quantizations and sampling step budgets. Rows labeled `Q4_0` are historical local builds only — **Q4_0 is not in the public HF release**; prefer **Q8_0** or **F16** from [mys/plaidq-0.7b-16step-GGUF](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF).
+Benchmarked on **NVIDIA GeForce GTX 1050 (4GB VRAM)** and **Intel CPU (4 Threads)** with canvas length $L = 256$ and infill hole $H = 32$ tokens across model quantizations and sampling step budgets. Public HF artifacts are **F16**, **Q8_0**, and **UD_Q4_K_M** at [mys/plaidq-0.7b-16step-GGUF](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF); rows labeled `Q4_0` below are historical local builds.
 
 | Model / Configuration | Steps ($N$) | Precision | Model Size | Hardware | Total Latency | Compute Pass | Infill Rate | Usability / Quality |
 | :--- | :---: | :--- | :---: | :--- | :---: | :---: | :---: | :--- |

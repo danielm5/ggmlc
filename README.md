@@ -540,11 +540,12 @@ pytest -v
    - 100% offline continuous latent diffusion code autocompletion engine powered by **PlaidQ**.
    - Pure mathematical Fill-In-The-Middle (FIM) without prompt tagging hacks.
    - Non-causal bidirectional transformer trunk, static 256-canvas CUDA Graph capture, OpenMP parallel hole-selective sampler, and persistent JSON-RPC IDE daemon (`daemon`).
-   - GGUFs (F16, Q8_0; Q4_0 not released): [mys/plaidq-0.7b-16step-GGUF](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF).
+   - GGUFs (F16, Q8_0, UD_Q4_K_M): [mys/plaidq-0.7b-16step-GGUF](https://huggingface.co/mys/plaidq-0.7b-16step-GGUF).
 3. **[Google TimesFM 3.0 Foundation Forecaster (`examples/timesfm`)](examples/timesfm/README.md)**:
    - Standalone zero-dependency C++ engine for Google TimesFM 3.0 foundation time-series forecasting.
    - 20-layer mixing transformer with Pax-style normalization, RoPE, and dynamic sequence dimensions.
    - Statistical domain suite: RevIN normalization, linear detrending ($R^2 \ge 0.5$), quantile monotonicity sorting, rolling backtesting engine with calibration scoring (`coverage_80`, `coverage_40`, `naive_mae_ratio`), multi-band SVG visualizer, and single-binary embedded Web Studio & REST API (`serve`).
+   - GGUFs (F16, Q8_0, Q4_0, UD_Q4_K_M): [mys/timesfm-3.0-GGUF](https://huggingface.co/mys/timesfm-3.0-GGUF).
 
 ---
 
