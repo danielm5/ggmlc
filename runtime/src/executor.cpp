@@ -2687,7 +2687,8 @@ void ModelExecutor::prepare(const std::unordered_map<std::string, int64_t>& symb
                 if (!in0 || !in1) {
                     throw std::runtime_error("GGML_OP_CUSTOM_BIAS_GELU requires 2 inputs");
                 }
-                if (is_cuda_) {
+                if (!ggml_backend_is_cpu(backend_)) {
+                    // map_custom ops are CPU-only; GPU backends (CUDA, Metal) need native ops
                     struct ggml_tensor* b = in1;
                     result = ggml_gelu(ctx_, ggml_add(ctx_, in0, b));
                 } else {
