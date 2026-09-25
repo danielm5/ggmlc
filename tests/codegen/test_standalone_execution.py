@@ -307,3 +307,41 @@ def test_standalone_permute_4d(ggml_standalone_libs, tmp_path):
 
     x = torch.randn(2, 4, 8, 16)
     _run_standalone(Permute().eval(), (x,), "tiny_permute_4d", ggml_standalone_libs, tmp_path)
+
+
+def test_standalone_sum_rows_dim0(ggml_standalone_libs, tmp_path):
+    """SUM over the last dim (GGML_OP_SUM_ROWS) through generated code matches torch."""
+    torch.manual_seed(0)
+
+    class SumLast(nn.Module):
+        def forward(self, x):
+            return x.sum(dim=-1)
+
+    x = torch.randn(4, 16)
+    _run_standalone(SumLast().eval(), (x,), "tiny_sum_rows_dim0", ggml_standalone_libs, tmp_path)
+
+
+def test_standalone_sqrt(ggml_standalone_libs, tmp_path):
+    """SQRT through generated standalone code matches torch."""
+    torch.manual_seed(0)
+
+    class Sqrt(nn.Module):
+        def forward(self, x):
+            return torch.sqrt(x.abs() + 0.5)
+
+    x = torch.randn(4, 16)
+    _run_standalone(Sqrt().eval(), (x,), "tiny_sqrt", ggml_standalone_libs, tmp_path)
+
+
+def test_standalone_l2_normalize(ggml_standalone_libs, tmp_path):
+    """L2-normalize (x / norm(keepdim)) through generated code matches torch."""
+    torch.manual_seed(0)
+
+    class L2Normalize(nn.Module):
+        def forward(self, img_embeds):
+            return img_embeds / img_embeds.norm(dim=-1, keepdim=True)
+
+    img_embeds = torch.randn(2, 8, 16)
+    _run_standalone(
+        L2Normalize().eval(), (img_embeds,), "tiny_l2_normalize", ggml_standalone_libs, tmp_path
+    )

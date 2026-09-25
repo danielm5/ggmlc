@@ -58,6 +58,8 @@ class GGMLCCppCodeGenerator:
             "#include <unordered_map>",
             "#include <memory>",
             "#include <cmath>",
+            "#include <algorithm>",
+            "#include <utility>",
             "#include <fstream>",
             "#include <iostream>",
             '#include "ggml.h"',
@@ -74,6 +76,49 @@ class GGMLCCppCodeGenerator:
             '#include "ggmlc/stdlib_kernels.h"',
             "",
             f"namespace {self.model_name} {{",
+            "",
+            "// ----------------------------------------------------------------------------",
+            "// Broadcast helper for elementwise ops (mirrors the interpreter).",
+            "// ggml binary ops need `b` repeatable to `a`; this aligns the pair first.",
+            "// ----------------------------------------------------------------------------",
+            "inline std::pair<struct ggml_tensor*, struct ggml_tensor*> match_broadcast(",
+            "    struct ggml_context* ctx,",
+            "    struct ggml_tensor* a,",
+            "    struct ggml_tensor* b) {",
+            "    if (!a || !b) return {a, b};",
+            "    if (ggml_are_same_shape(a, b)) return {a, b};",
+            "    if (a->ne[1] == 1 && a->ne[2] == 1 && a->ne[3] == 1 && a->ne[0] == b->ne[2]) {",
+            "        if (!ggml_is_contiguous(a)) a = ggml_cont(ctx, a);",
+            "        a = ggml_reshape_4d(ctx, a, 1, 1, a->ne[0], 1);",
+            "    }",
+            "    if (b->ne[1] == 1 && b->ne[2] == 1 && b->ne[3] == 1 && b->ne[0] == a->ne[2]) {",
+            "        if (!ggml_is_contiguous(b)) b = ggml_cont(ctx, b);",
+            "        b = ggml_reshape_4d(ctx, b, 1, 1, b->ne[0], 1);",
+            "    }",
+            "    if (ggml_can_repeat(b, a)) return {a, b};",
+            "    if (ggml_can_repeat(a, b)) {",
+            "        if (!ggml_is_contiguous(a)) a = ggml_cont(ctx, a);",
+            "        a = ggml_repeat(ctx, a, b);",
+            "        return {a, b};",
+            "    }",
+            "    int64_t target_ne[4];",
+            "    bool need_repeat_a = false;",
+            "    bool need_repeat_b = false;",
+            "    for (int d = 0; d < 4; ++d) {",
+            "        target_ne[d] = std::max(a->ne[d], b->ne[d]);",
+            "        if (a->ne[d] != target_ne[d]) need_repeat_a = true;",
+            "        if (b->ne[d] != target_ne[d]) need_repeat_b = true;",
+            "    }",
+            "    if (need_repeat_a) {",
+            "        if (!ggml_is_contiguous(a)) a = ggml_cont(ctx, a);",
+            "        a = ggml_repeat_4d(ctx, a, target_ne[0], target_ne[1], target_ne[2], target_ne[3]);",
+            "    }",
+            "    if (need_repeat_b) {",
+            "        if (!ggml_is_contiguous(b)) b = ggml_cont(ctx, b);",
+            "        b = ggml_repeat_4d(ctx, b, target_ne[0], target_ne[1], target_ne[2], target_ne[3]);",
+            "    }",
+            "    return {a, b};",
+            "}",
             "",
             "// ----------------------------------------------------------------------------",
             "// Model Parameter Weights Structure",
@@ -228,13 +273,33 @@ class GGMLCCppCodeGenerator:
         inp_vars = [f"tensors[{i}]" for i in node.inputs]
 
         if node.opcode == GGMLOpCode.GGML_OP_ADD:
-            lines.append(f"    tensors[{out_id}] = ggml_add(ctx, {inp_vars[0]}, {inp_vars[1]});")
+            lines.append(
+                f"    auto bc_{node.id} = match_broadcast(ctx, {inp_vars[0]}, {inp_vars[1]});"
+            )
+            lines.append(
+                f"    tensors[{out_id}] = ggml_add(ctx, bc_{node.id}.first, bc_{node.id}.second);"
+            )
         elif node.opcode == GGMLOpCode.GGML_OP_SUB:
-            lines.append(f"    tensors[{out_id}] = ggml_sub(ctx, {inp_vars[0]}, {inp_vars[1]});")
+            lines.append(
+                f"    auto bc_{node.id} = match_broadcast(ctx, {inp_vars[0]}, {inp_vars[1]});"
+            )
+            lines.append(
+                f"    tensors[{out_id}] = ggml_sub(ctx, bc_{node.id}.first, bc_{node.id}.second);"
+            )
         elif node.opcode == GGMLOpCode.GGML_OP_MUL:
-            lines.append(f"    tensors[{out_id}] = ggml_mul(ctx, {inp_vars[0]}, {inp_vars[1]});")
+            lines.append(
+                f"    auto bc_{node.id} = match_broadcast(ctx, {inp_vars[0]}, {inp_vars[1]});"
+            )
+            lines.append(
+                f"    tensors[{out_id}] = ggml_mul(ctx, bc_{node.id}.first, bc_{node.id}.second);"
+            )
         elif node.opcode == GGMLOpCode.GGML_OP_DIV:
-            lines.append(f"    tensors[{out_id}] = ggml_div(ctx, {inp_vars[0]}, {inp_vars[1]});")
+            lines.append(
+                f"    auto bc_{node.id} = match_broadcast(ctx, {inp_vars[0]}, {inp_vars[1]});"
+            )
+            lines.append(
+                f"    tensors[{out_id}] = ggml_div(ctx, bc_{node.id}.first, bc_{node.id}.second);"
+            )
         elif node.opcode == GGMLOpCode.GGML_OP_MUL_MAT:
             if node.attributes.get("transpose_in0", 0) == 1:
                 # transpose does not need its source to be contiguous, but the
@@ -471,6 +536,58 @@ class GGMLCCppCodeGenerator:
         elif node.opcode == GGMLOpCode.GGML_OP_SCALE:
             s_val = node.attributes.get("scale", 1.0)
             lines.append(f"    tensors[{out_id}] = ggml_scale(ctx, {inp_vars[0]}, {s_val}f);")
+        elif node.opcode == GGMLOpCode.GGML_OP_SQRT:
+            lines.append(f"    struct ggml_tensor* sq_{node.id} = {inp_vars[0]};")
+            lines.append(
+                f"    if (!ggml_is_contiguous(sq_{node.id})) sq_{node.id} = ggml_cont(ctx, sq_{node.id});"
+            )
+            if node.attributes.get("is_rsqrt", 0):
+                lines.append(
+                    f"    struct ggml_tensor* sqr_{node.id} = ggml_sqrt(ctx, sq_{node.id});"
+                )
+                lines.append(f"    tensors[{out_id}] = ggml_div(ctx, sqr_{node.id}, sq_{node.id});")
+            else:
+                lines.append(f"    tensors[{out_id}] = ggml_sqrt(ctx, sq_{node.id});")
+        elif node.opcode == GGMLOpCode.GGML_OP_SUM_ROWS:
+            g_dim = node.attributes.get("ggml_dim", 0)
+            out_t = self.graph.tensors[out_id]
+            ne_strs = [_dim_to_cpp_expr(d) for d in out_t.ne]
+            if g_dim == 1:
+                lines.append(
+                    f"    struct ggml_tensor* sr_{node.id} = ggml_cont(ctx, ggml_transpose(ctx, {inp_vars[0]}));"
+                )
+                lines.append(f"    sr_{node.id} = ggml_sum_rows(ctx, sr_{node.id});")
+                lines.append(
+                    f"    sr_{node.id} = ggml_cont(ctx, ggml_transpose(ctx, sr_{node.id}));"
+                )
+            elif g_dim >= 2:
+                lines.append(f"    struct ggml_tensor* sr_{node.id} = {inp_vars[0]};")
+                lines.append(
+                    f"    if (!ggml_is_contiguous(sr_{node.id})) sr_{node.id} = ggml_cont(ctx, sr_{node.id});"
+                )
+                lines.append(
+                    f"    sr_{node.id} = ggml_reshape_4d(ctx, sr_{node.id}, sr_{node.id}->ne[0], sr_{node.id}->ne[1] * sr_{node.id}->ne[2], 1, sr_{node.id}->ne[3]);"
+                )
+                lines.append(f"    sr_{node.id} = ggml_cont(ctx, sr_{node.id});")
+                lines.append(
+                    f"    sr_{node.id} = ggml_cont(ctx, ggml_transpose(ctx, sr_{node.id}));"
+                )
+                lines.append(f"    sr_{node.id} = ggml_sum_rows(ctx, sr_{node.id});")
+                lines.append(
+                    f"    sr_{node.id} = ggml_cont(ctx, ggml_transpose(ctx, sr_{node.id}));"
+                )
+            else:
+                lines.append(f"    struct ggml_tensor* sr_{node.id} = {inp_vars[0]};")
+                lines.append(
+                    f"    if (!ggml_is_contiguous(sr_{node.id})) sr_{node.id} = ggml_cont(ctx, sr_{node.id});"
+                )
+                lines.append(f"    sr_{node.id} = ggml_sum_rows(ctx, sr_{node.id});")
+            lines.append(
+                f"    if (!ggml_is_contiguous(sr_{node.id})) sr_{node.id} = ggml_cont(ctx, sr_{node.id});"
+            )
+            lines.append(
+                f"    tensors[{out_id}] = ggml_reshape_4d(ctx, sr_{node.id}, {', '.join(ne_strs)});"
+            )
         elif node.opcode == GGMLOpCode.GGML_OP_CPY:
             out_t = self.graph.tensors[out_id]
             ne_strs = [_dim_to_cpp_expr(d) for d in out_t.ne]
