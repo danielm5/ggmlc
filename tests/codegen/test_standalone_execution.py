@@ -26,7 +26,7 @@ from ggmlc.serialization.gguf import save_to_gguf
 from torch import nn
 
 pytestmark = pytest.mark.skipif(
-    sys.platform != "linux",
+    sys.platform not in ("linux"),
     reason="standalone compile-and-run harness validated on Linux only",
 )
 
@@ -48,18 +48,17 @@ def ggml_standalone_libs():
     change. Delete that directory to force a rebuild. ccache is used
     automatically when installed.
     """
-    cxx = os.environ.get("CXX") or shutil.which("g++") or shutil.which("c++")
-    assert cxx is not None, "no C++ compiler found (set CXX)"
-    cxx_id = subprocess.run(
-        [cxx, "--version"], capture_output=True, text=True, check=True, timeout=60
-    ).stdout.splitlines()[0]
+    assert shutil.which("cmake") is not None, "cmake is required on PATH"
+    # Toolchain identity for the cache key: explicit env or cmake defaults.
+    # No compiler probing here — toolchain detection belongs to cmake.
     key = {
         "sources": _ggml_source_key(),
         "build_type": "Release",
         "shared": False,
         "tests": False,
         "examples": False,
-        "cxx": cxx_id,
+        "cc": os.environ.get("CC", "default"),
+        "cxx": os.environ.get("CXX", "default"),
     }
     cache_dir = (
         Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
@@ -92,7 +91,7 @@ def ggml_standalone_libs():
     env = _cmake_env()
     _run_logged(configure, timeout=600, env=env)
     _run_logged(
-        ["cmake", "--build", str(build_dir), "-j", str(os.cpu_count() or 4)],
+        ["cmake", "--build", str(build_dir), "--parallel"],
         timeout=1200,
         env=env,
     )
@@ -219,7 +218,7 @@ def _run_standalone(model, example_args, test_name, ggml_libs, tmp_path, atol=1e
     env = _cmake_env()
     _run_logged(configure, timeout=300, env=env)
     _run_logged(
-        ["cmake", "--build", str(test_build_dir), "-j", str(os.cpu_count() or 4)],
+        ["cmake", "--build", str(test_build_dir), "--parallel"],
         timeout=600,
         env=env,
     )
