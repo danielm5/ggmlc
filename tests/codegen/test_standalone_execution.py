@@ -26,8 +26,8 @@ from ggmlc.serialization.gguf import save_to_gguf
 from torch import nn
 
 pytestmark = pytest.mark.skipif(
-    sys.platform not in ("linux"),
-    reason="standalone compile-and-run harness validated on Linux only",
+    sys.platform not in ("linux", "win32"),
+    reason="standalone compile-and-run harness validated on Linux and Windows only",
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -126,14 +126,44 @@ def _require_one(matches, what, where):
 
 
 def _cmake_env():
-    """Environment for cmake builds: ccache launchers when ccache exists, else inherit."""
-    if shutil.which("ccache"):
-        return {
-            **os.environ,
-            "CMAKE_C_COMPILER_LAUNCHER": "ccache",
-            "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
-        }
-    return None
+    """Environment for cmake builds: MSVC detection on Windows, ccache launchers when available."""
+    env = os.environ.copy()
+    if sys.platform == "win32" and shutil.which("cl", path=env.get("PATH")) is None:
+        vswhere = (
+            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
+            / "Microsoft Visual Studio"
+            / "Installer"
+            / "vswhere.exe"
+        )
+        if vswhere.exists():
+            try:
+                out = subprocess.run(
+                    [str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                inst = out.stdout.strip()
+                if inst:
+                    vcvars = Path(inst) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+                    if vcvars.exists():
+                        p = subprocess.run(
+                            f'"{vcvars}" && set',
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        for line in p.stdout.splitlines():
+                            if "=" in line:
+                                k, v = line.split("=", 1)
+                                env[k] = v
+            except (subprocess.SubprocessError, OSError):
+                pass
+    if shutil.which("ccache", path=env.get("PATH")):
+        env["CMAKE_C_COMPILER_LAUNCHER"] = "ccache"
+        env["CMAKE_CXX_COMPILER_LAUNCHER"] = "ccache"
+    return env
 
 
 def _ggml_source_key():
@@ -223,6 +253,10 @@ def _run_standalone(model, example_args, test_name, ggml_libs, tmp_path, atol=1e
         env=env,
     )
     exe_path = test_build_dir / ("standalone_test.exe" if os.name == "nt" else "standalone_test")
+    if not exe_path.exists() and os.name == "nt":
+        rel_exe = test_build_dir / "Release" / "standalone_test.exe"
+        if rel_exe.exists():
+            exe_path = rel_exe
     run = _run_logged(
         [str(exe_path), str(gguf_path), str(out_path), str(len(input_ids)), *spec_args],
         timeout=120,
