@@ -418,6 +418,8 @@ class GGMLCCppCodeGenerator:
                 lines.append(
                     f"    tensors[{out_id}] = ggml_add(ctx, bcb_{node.id}.first, bcb_{node.id}.second);"
                 )
+            if node.attributes.get("fused_relu", 0):
+                lines.append(f"    tensors[{out_id}] = ggml_relu(ctx, tensors[{out_id}]);")
         elif node.opcode == GGMLOpCode.GGML_OP_CONV_2D_DW:
             s0 = node.attributes.get("stride_w", 1)
             s1 = node.attributes.get("stride_h", 1)
@@ -435,6 +437,8 @@ class GGMLCCppCodeGenerator:
                 lines.append(
                     f"    tensors[{out_id}] = ggml_add(ctx, bcb_{node.id}.first, bcb_{node.id}.second);"
                 )
+            if node.attributes.get("fused_relu", 0):
+                lines.append(f"    tensors[{out_id}] = ggml_relu(ctx, tensors[{out_id}]);")
         elif node.opcode == GGMLOpCode.GGML_OP_POOL_2D:
             is_max = node.attributes.get("is_max", 0) != 0
             pool_enum = "GGML_OP_POOL_MAX" if is_max else "GGML_OP_POOL_AVG"

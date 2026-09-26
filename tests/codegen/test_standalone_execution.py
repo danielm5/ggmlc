@@ -21,6 +21,7 @@ import pytest
 import torch
 from ggmlc.codegen import generate_cpp_project
 from ggmlc.dialect.ggml.lowering import lower_to_ggml
+from ggmlc.dialect.ggml.ops import GGMLOpCode
 from ggmlc.frontend.pytorch import export_torch_model
 from ggmlc.serialization.gguf import save_to_gguf
 from torch import nn
@@ -437,3 +438,28 @@ def test_standalone_clamp_min_open(ggml_standalone_libs, tmp_path):
 
     x = torch.randn(4, 16)
     _run_standalone(ClampMin().eval(), (x,), "tiny_clamp_min_open", ggml_standalone_libs, tmp_path)
+
+
+def test_standalone_fused_conv_relu(ggml_standalone_libs, tmp_path):
+    """Fused CONV_2D+RELU through generated code matches torch."""
+    torch.manual_seed(0)
+
+    class ConvRelu(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv = nn.Conv2d(3, 8, 3, padding=1)
+
+        def forward(self, x):
+            return torch.relu(self.conv(x))
+
+    model = ConvRelu().eval()
+    x = torch.randn(1, 3, 16, 16)
+    exported = export_torch_model(model, (x,), model_name="tiny_fused_conv_relu")
+    ggml_graph = lower_to_ggml(exported.main_graph)
+    fused = [
+        op
+        for op in ggml_graph.nodes
+        if op.opcode == GGMLOpCode.GGML_OP_CONV_2D and op.attributes.get("fused_relu")
+    ]
+    assert fused, "expected conv+relu fusion for coverage"
+    _run_standalone(model, (x,), "tiny_fused_conv_relu", ggml_standalone_libs, tmp_path)
