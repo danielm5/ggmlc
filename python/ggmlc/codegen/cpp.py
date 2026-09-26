@@ -554,6 +554,12 @@ class GGMLCCppCodeGenerator:
             lines.append(
                 f"    tensors[{out_id}] = ggml_flash_attn_ext(ctx, q_{node.id}, k_{node.id}, v_{node.id}, {mask_var}, {scale_expr}, 0.0f, 0.0f);"
             )
+            # Raw output is heads-major; the graph layout needs L/H swapped
+            # unless the transpose is already fused upstream.
+            if not node.attributes.get("fused_transpose", 0):
+                lines.append(
+                    f"    tensors[{out_id}] = ggml_permute(ctx, tensors[{out_id}], 0, 2, 1, 3);"
+                )
         elif node.opcode == GGMLOpCode.GGML_OP_ROPE:
             n_dims = node.attributes.get("n_dims", 0)
             mode = node.attributes.get("mode", 0)
