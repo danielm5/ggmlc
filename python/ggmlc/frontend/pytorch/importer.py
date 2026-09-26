@@ -253,6 +253,7 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
             or "sym_numel" in target_str
             or "chunk" in target_str
             or "split" in target_str
+            or "unbind" in target_str
         ):
             # Symbolic scalar query node or multi-output container (handled via getitem)
             continue
@@ -261,16 +262,12 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
             parent = node.args[0]
             if isinstance(parent, Node):
                 parent_target_str = str(parent.target)
-                if ("split" in parent_target_str or "chunk" in parent_target_str) and isinstance(
-                    node.args[1], int
-                ):
+                if ("split" in parent_target_str
+                    or "chunk" in parent_target_str
+                    or "unbind" in parent_target_str
+                ) and isinstance(node.args[1], int):
                     idx = int(node.args[1])
                     split_input = parent.args[0]
-                    dim = (
-                        int(parent.args[2])
-                        if len(parent.args) > 2 and parent.args[2] is not None
-                        else 0
-                    )
                     val = node.meta.get("val")
                     shape = (
                         _torch_shape_to_shape(val.shape)
@@ -278,30 +275,43 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                         else Shape([])
                     )
                     dtype = (
-                        DType.from_torch(val.dtype) if isinstance(val, torch.Tensor) else DType.F32
+                        DType.from_torch(val.dtype)
+                        if isinstance(val, torch.Tensor)
+                        else DType.F32
                     )
-                    if isinstance(val, torch.Tensor) and dim < 0:
-                        dim = len(val.shape) + dim
-                    if "chunk" in parent_target_str:
-                        sz = val.shape[dim] if isinstance(val, torch.Tensor) else 1
-                        start = idx * sz
-                        end = start + sz
-                    elif isinstance(parent.args[1], (list, tuple)):
-                        start = sum(parent.args[1][:idx])
-                        end = start + parent.args[1][idx]
+
+                    if "unbind" in parent_target_str:
+                        dim = (
+                            int(parent.args[1])
+                            if len(parent.args) > 1 and parent.args[1] is not None
+                            else 0
+                        )
+                        if isinstance(val, torch.Tensor) and dim < 0:
+                            dim = len(val.shape) + dim
+                        start = idx
+                        end = idx + 1
+
                     else:
-                        sz = int(parent.args[1])
-                        start = idx * sz
-                        end = (idx + 1) * sz
-                    val = node.meta.get("val")
-                    shape = (
-                        _torch_shape_to_shape(val.shape)
-                        if isinstance(val, torch.Tensor)
-                        else Shape([])
-                    )
-                    dtype = (
-                        DType.from_torch(val.dtype) if isinstance(val, torch.Tensor) else DType.F32
-                    )
+                        dim = (
+                            int(parent.args[2])
+                            if len(parent.args) > 2 and parent.args[2] is not None
+                            else 0
+                        )
+                        if isinstance(val, torch.Tensor) and dim < 0:
+                            dim = len(val.shape) + dim
+
+                        if "chunk" in parent_target_str:
+                            sz = val.shape[dim] if isinstance(val, torch.Tensor) else 1
+                            start = idx * sz
+                            end = start + sz
+                        elif isinstance(parent.args[1], (list, tuple)):
+                            start = sum(parent.args[1][:idx])
+                            end = start + parent.args[1][idx]
+                        else:
+                            sz = int(parent.args[1])
+                            start = idx * sz
+                            end = (idx + 1) * sz
+
                     out_t = g.add_tensor(
                         name=node.name,
                         shape=shape,
@@ -354,6 +364,7 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
 
         if (
             "split" in target_str
+            or "unbind" in target_str
             or "assert" in target_str
             or "check" in target_str
             or "to.dtype" in target_str
@@ -797,15 +808,19 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                 input_tensor_ids.append(node_to_tensor[sub_node].id)
             attributes["dim"] = int(node.args[1]) if len(node.args) > 1 else 0
         elif opcode == OpCode.EXPAND:
-            # aten.expand.default(self, size)
             input_tensor_ids.append(node_to_tensor[node.args[0]].id)
-            dims = []
-            for d in node.args[1]:
-                if isinstance(d, Node):
-                    dims.append(_symint_to_dim(d.meta.get("val")))
-                else:
-                    dims.append(_symint_to_dim(d))
-            attributes["shape"] = tuple(dims)
+            if "expand_as" in target_str:
+                # aten.expand_as.default(self, other)
+                attributes["shape"] = tuple(node_to_tensor[node.args[1]].shape.dims)
+            else:
+                # aten.expand.default(self, size)
+                dims = []
+                for d in node.args[1]:
+                    if isinstance(d, Node):
+                        dims.append(_symint_to_dim(d.meta.get("val")))
+                    else:
+                        dims.append(_symint_to_dim(d))
+                attributes["shape"] = tuple(dims)
         elif opcode in (OpCode.SQUEEZE, OpCode.UNSQUEEZE):
             input_tensor_ids.append(node_to_tensor[node.args[0]].id)
             if len(node.args) > 1 and node.args[1] is not None:
@@ -1060,7 +1075,10 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                     else attributes["dilation_h"]
                 )
             attributes["groups"] = groups
-            # Check if this is a grouped convolution that needs decomposition (1 < groups < in_channels)
+            # Check if this is a grouped convolution that needs decomposition:
+            # 1 < groups < in_channels, or groups == in_channels with a channel
+            # multiplier (out_channels != in_channels, so not depthwise).
+            # True depthwise (groups == in == out) stays a single DW conv.
             in_t_candidate = node_to_tensor[node.args[0]]
             w_t_candidate = node_to_tensor[node.args[1]]
             bias_t_candidate = (
@@ -1081,7 +1099,14 @@ def import_exported_program(ep: ExportedProgram, graph_name: str = "main") -> Gr
                 cin_val = int(in_t_candidate.shape.dims[1].evaluate({}))
                 cout_val = int(w_t_candidate.shape.dims[0].evaluate({}))
                 g_val = int(groups)
-                if 1 < g_val < cin_val:
+                is_true_dw = g_val == cin_val == cout_val
+                if (
+                    g_val > 1
+                    and not is_true_dw
+                    and g_val <= cin_val
+                    and cin_val % g_val == 0
+                    and cout_val % g_val == 0
+                ):
                     cin_per_group = cin_val // g_val
                     cout_per_group = cout_val // g_val
                     out_group_tensors = []

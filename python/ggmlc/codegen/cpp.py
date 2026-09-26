@@ -58,6 +58,7 @@ class GGMLCCppCodeGenerator:
             "#include <unordered_map>",
             "#include <memory>",
             "#include <cmath>",
+            "#include <cfloat>",
             "#include <algorithm>",
             "#include <utility>",
             "#include <fstream>",
@@ -207,7 +208,11 @@ class GGMLCCppCodeGenerator:
                 "    const std::unordered_map<std::string, struct ggml_tensor*>& inputs,",
                 "    const std::unordered_map<std::string, int64_t>& symbols = {}",
                 ") {",
-                "    struct ggml_cgraph* gf = ggml_new_graph(ctx);",
+                # Each lowered op expands to several ggml kernels (im2col+mul_mat,
+                # broadcast helpers, concat folds): same 16x rule as the
+                # interpreter (runtime/src/executor.cpp), count baked at emit.
+                f"    size_t graph_nodes = std::max<size_t>(32768, {len(self.graph.nodes) * 16});",
+                "    struct ggml_cgraph* gf = ggml_new_graph_custom(ctx, graph_nodes, false);",
                 "",
                 "    // Mapping from tensor ID to allocated computation node",
                 "    std::unordered_map<uint32_t, struct ggml_tensor*> tensors;",
@@ -376,10 +381,16 @@ class GGMLCCppCodeGenerator:
                     f"    tensors[{out_id}] = ggml_unary(ctx, {inp_vars[0]}, GGML_UNARY_OP_RELU);"
                 )
         elif node.opcode == GGMLOpCode.GGML_OP_CLAMP:
-            min_v = node.attributes.get("min", 0.0)
-            max_v = node.attributes.get("max", 6.0)
+            if "min" in node.attributes:
+                min_expr = f"{node.attributes['min']}f"
+            else:
+                min_expr = "-FLT_MAX"
+            if "max" in node.attributes:
+                max_expr = f"{node.attributes['max']}f"
+            else:
+                max_expr = "FLT_MAX"
             lines.append(
-                f"    tensors[{out_id}] = ggml_clamp(ctx, {inp_vars[0]}, {min_v}f, {max_v}f);"
+                f"    tensors[{out_id}] = ggml_clamp(ctx, {inp_vars[0]}, {min_expr}, {max_expr});"
             )
         elif node.opcode == GGMLOpCode.GGML_OP_CONV_2D:
             s0 = node.attributes.get("stride_w", 1)
@@ -393,7 +404,10 @@ class GGMLCCppCodeGenerator:
             )
             if len(inp_vars) > 2:
                 lines.append(
-                    f"    tensors[{out_id}] = ggml_add(ctx, tensors[{out_id}], {inp_vars[2]});"
+                    f"    auto bcb_{node.id} = match_broadcast(ctx, tensors[{out_id}], {inp_vars[2]});"
+                )
+                lines.append(
+                    f"    tensors[{out_id}] = ggml_add(ctx, bcb_{node.id}.first, bcb_{node.id}.second);"
                 )
         elif node.opcode == GGMLOpCode.GGML_OP_CONV_2D_DW:
             s0 = node.attributes.get("stride_w", 1)
@@ -403,11 +417,14 @@ class GGMLCCppCodeGenerator:
             d0 = node.attributes.get("dilation_w", 1)
             d1 = node.attributes.get("dilation_h", 1)
             lines.append(
-                f"    tensors[{out_id}] = ggml_conv_2d_dw(ctx, {inp_vars[0]}, {inp_vars[1]}, {s0}, {s1}, {p0}, {p1}, {d0}, {d1});"
+                f"    tensors[{out_id}] = ggml_conv_2d_dw_direct(ctx, {inp_vars[0]}, {inp_vars[1]}, {s0}, {s1}, {p0}, {p1}, {d0}, {d1});"
             )
             if len(inp_vars) > 2:
                 lines.append(
-                    f"    tensors[{out_id}] = ggml_add(ctx, tensors[{out_id}], {inp_vars[2]});"
+                    f"    auto bcb_{node.id} = match_broadcast(ctx, tensors[{out_id}], {inp_vars[2]});"
+                )
+                lines.append(
+                    f"    tensors[{out_id}] = ggml_add(ctx, bcb_{node.id}.first, bcb_{node.id}.second);"
                 )
         elif node.opcode == GGMLOpCode.GGML_OP_POOL_2D:
             is_max = node.attributes.get("is_max", 0) != 0
@@ -528,9 +545,19 @@ class GGMLCCppCodeGenerator:
             )
         elif node.opcode == GGMLOpCode.GGML_OP_CONCAT:
             dim = node.attributes.get("ggml_dim", node.attributes.get("dim", 0))
+            lines.append(f"    struct ggml_tensor* cc_{node.id} = {inp_vars[0]};")
             lines.append(
-                f"    tensors[{out_id}] = ggml_concat(ctx, {inp_vars[0]}, {inp_vars[1]}, {dim});"
+                f"    if (!ggml_is_contiguous(cc_{node.id})) cc_{node.id} = ggml_cont(ctx, cc_{node.id});"
             )
+            for i, inp_var in enumerate(inp_vars[1:]):
+                lines.append(f"    struct ggml_tensor* cn_{node.id}_{i} = {inp_var};")
+                lines.append(
+                    f"    if (!ggml_is_contiguous(cn_{node.id}_{i})) cn_{node.id}_{i} = ggml_cont(ctx, cn_{node.id}_{i});"
+                )
+                lines.append(
+                    f"    cc_{node.id} = ggml_concat(ctx, cc_{node.id}, cn_{node.id}_{i}, {dim});"
+                )
+            lines.append(f"    tensors[{out_id}] = cc_{node.id};")
         elif node.opcode == GGMLOpCode.GGML_OP_CONT:
             lines.append(f"    tensors[{out_id}] = ggml_cont(ctx, {inp_vars[0]});")
         elif node.opcode == GGMLOpCode.GGML_OP_SCALE:

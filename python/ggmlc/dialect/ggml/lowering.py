@@ -514,7 +514,21 @@ def _lower_op(
         ):
             w_ic = w_t.shape.dims[1].evaluate({})
             x_ic = x_t.shape.dims[1].evaluate({})
-            if w_ic == 1 and (groups > 1 or x_ic > 1):
+            w_oc = w_t.shape.dims[0].evaluate({}) if w_t.shape.dims[0].is_static() else None
+            if w_ic == 1 and groups > 1:
+                # True depthwise needs one filter per input channel.
+                # Grouped-with-multiplier (e.g. groups=80, C_in=80,
+                # C_out=160) has no ggml op and must be decomposed
+                # per group by the importer.
+                if (w_oc is None or w_oc == groups) and x_ic == groups:
+                    is_dw = True
+                else:
+                    raise ValueError(
+                        f"grouped convolution '{op.name}' (id={op.id}) is not "
+                        f"depthwise (groups={groups}, in_channels={x_ic}, "
+                        f"out_channels={w_oc}); ggml has no grouped-conv op"
+                    )
+            elif w_ic == 1 and x_ic > 1:
                 is_dw = True
         elif len(w_t.shape.dims) == 3 and w_t.shape.dims[1].is_static():
             # Conv1d depthwise: weight [C, 1, K]

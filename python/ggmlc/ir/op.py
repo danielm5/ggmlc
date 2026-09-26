@@ -61,7 +61,6 @@ class OpCode(Enum):
     TRANSPOSE = "transpose"
     SLICE = "slice"
     CONCAT = "concat"
-    SPLIT = "split"
     EXPAND = "expand"
     REPEAT = "repeat"
     SQUEEZE = "squeeze"
