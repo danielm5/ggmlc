@@ -2497,6 +2497,7 @@ void ModelExecutor::prepare(const std::unordered_map<std::string, int64_t>& symb
                 int g_dim = op.attributes.count("ggml_dim") ? static_cast<int>(op.attributes.at("ggml_dim")) : 0;
                 int64_t start = op.attributes.count("start") ? op.attributes.at("start") : 0;
                 int64_t step = op.attributes.count("step") ? op.attributes.at("step") : 1;
+                int64_t mult = op.attributes.count("offset_mult") ? op.attributes.at("offset_mult") : 1;
                 // Default: keep QKV fusion slices as non-contiguous views (zero copy).
                 // GGMLC_VIEW_FORCE_CONT=1 restores eager materialization for A/B.
                 if (env_flag_enabled("GGMLC_VIEW_FORCE_CONT")) {
@@ -2507,7 +2508,7 @@ void ModelExecutor::prepare(const std::unordered_map<std::string, int64_t>& symb
                     // Break pathological view-of-view chains that break offset math.
                     in0 = ggml_cont(ctx_, in0);
                 }
-                size_t offset = start * in0->nb[g_dim];
+                size_t offset = static_cast<size_t>(start * mult) * in0->nb[g_dim];
                 size_t nb1 = in0->nb[1] * (g_dim == 1 ? step : 1);
                 size_t nb2 = in0->nb[2] * (g_dim == 2 ? step : 1);
                 size_t nb3 = in0->nb[3] * (g_dim == 3 ? step : 1);

@@ -582,6 +582,20 @@ def _lower_op(
         if dim < 0:
             dim += R
         ggml_dim = R - 1 - dim if R > 0 else 0
+        if ggml_dim > 3:
+            # Outer dims fold into ne[3] (canonical_shape_to_ggml_ne): the
+            # slice lands on ggml dim 3, with an offset multiplier covering
+            # the folded dims inner to the sliced one.
+            ggml_dim = 3
+            mult = 1
+            for d in in_t.shape.dims[dim + 1 : R - 3]:
+                if isinstance(d, StaticDim):
+                    mult *= d.value
+                else:
+                    raise ValueError(  # noqa: TRY004 - unsupported shape, not a type error
+                        f"slice of folded dim {dim} needs static inner shape (tensor '{in_t.name}')"
+                    )
+            attrs["offset_mult"] = int(mult)
         attrs["ggml_dim"] = int(ggml_dim)
         attrs["start"] = int(start)
         return GGMLOpDef(op.id, GGMLOpCode.GGML_OP_VIEW, in_ids, out_ids, attrs, op.name)

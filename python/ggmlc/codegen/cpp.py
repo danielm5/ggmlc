@@ -684,7 +684,11 @@ class GGMLCCppCodeGenerator:
             ne_strs = [_dim_to_cpp_expr(d) for d in out_t.ne]
             start = node.attributes.get("start", 0)
             ggml_dim = node.attributes.get("ggml_dim", 0)
-            offset = f"{start} * {inp_vars[0]}->nb[{ggml_dim}]"
+            mult = node.attributes.get("offset_mult", 1)
+            if mult == 1:
+                offset = f"{start} * {inp_vars[0]}->nb[{ggml_dim}]"
+            else:
+                offset = f"{start} * {mult} * {inp_vars[0]}->nb[{ggml_dim}]"
             lines.append(
                 f"    tensors[{out_id}] = ggml_view_4d(ctx, {inp_vars[0]}, {', '.join(ne_strs)}, {inp_vars[0]}->nb[1], {inp_vars[0]}->nb[2], {inp_vars[0]}->nb[3], {offset});"
             )
