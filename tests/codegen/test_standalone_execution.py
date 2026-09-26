@@ -463,3 +463,19 @@ def test_standalone_fused_conv_relu(ggml_standalone_libs, tmp_path):
     ]
     assert fused, "expected conv+relu fusion for coverage"
     _run_standalone(model, (x,), "tiny_fused_conv_relu", ggml_standalone_libs, tmp_path)
+
+
+def test_standalone_sdpa_default_scale(ggml_standalone_libs, tmp_path):
+    """SDPA without explicit scale uses 1/sqrt(head_dim), matching torch."""
+    torch.manual_seed(0)
+
+    class TinyAttention(nn.Module):
+        def forward(self, q, k, v):
+            return torch.nn.functional.scaled_dot_product_attention(q, k, v)
+
+    q = torch.randn(1, 2, 8, 16)
+    k = torch.randn(1, 2, 8, 16)
+    v = torch.randn(1, 2, 8, 16)
+    _run_standalone(
+        TinyAttention().eval(), (q, k, v), "tiny_sdpa_default_scale", ggml_standalone_libs, tmp_path
+    )

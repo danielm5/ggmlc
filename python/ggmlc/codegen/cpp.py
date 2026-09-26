@@ -79,7 +79,7 @@ class GGMLCCppCodeGenerator:
             f"namespace {self.model_name} {{",
             "",
             "// ----------------------------------------------------------------------------",
-            "// Broadcast helper for elementwise ops (mirrors the interpreter).",
+            "// Broadcast helper for elementwise ops.",
             "// ggml binary ops need `b` repeatable to `a`; this aligns the pair first.",
             "// ----------------------------------------------------------------------------",
             "inline std::pair<struct ggml_tensor*, struct ggml_tensor*> match_broadcast(",
@@ -128,6 +128,25 @@ class GGMLCCppCodeGenerator:
             "        }",
             "    }",
             "    return {a, b};",
+            "}",
+            "",
+            "// ----------------------------------------------------------------------------",
+            "// Pairwise concat helper.",
+            "// Skips empty inputs and aligns contiguity before concatenating.",
+            "// ----------------------------------------------------------------------------",
+            "inline struct ggml_tensor* concat_pair(",
+            "    struct ggml_context* ctx,",
+            "    struct ggml_tensor* a,",
+            "    struct ggml_tensor* b,",
+            "    int ggml_dim) {",
+            "    auto is_empty = [](struct ggml_tensor* t) {",
+            "        return t->ne[0] == 0 || t->ne[1] == 0 || t->ne[2] == 0 || t->ne[3] == 0;",
+            "    };",
+            "    if (is_empty(a)) return b;",
+            "    if (is_empty(b)) return a;",
+            "    if (!ggml_is_contiguous(a)) a = ggml_cont(ctx, a);",
+            "    if (!ggml_is_contiguous(b)) b = ggml_cont(ctx, b);",
+            "    return ggml_concat(ctx, a, b, ggml_dim);",
             "}",
             "",
             "// ----------------------------------------------------------------------------",
@@ -217,9 +236,8 @@ class GGMLCCppCodeGenerator:
                 "    const std::unordered_map<std::string, struct ggml_tensor*>& inputs,",
                 "    const std::unordered_map<std::string, int64_t>& symbols = {}",
                 ") {",
-                # Each lowered op expands to several ggml kernels (im2col+mul_mat,
-                # broadcast helpers, concat folds): same 16x rule as the
-                # interpreter (runtime/src/executor.cpp), count baked at emit.
+                # Each graph op expands to several ggml kernels, so size the
+                # arena generously from the node count instead of ggml's default.
                 f"    size_t graph_nodes = std::max<size_t>(32768, {len(self.graph.nodes) * 16});",
                 "    struct ggml_cgraph* gf = ggml_new_graph_custom(ctx, graph_nodes, false);",
                 "",
@@ -518,7 +536,12 @@ class GGMLCCppCodeGenerator:
             k_var = inp_vars[1]
             v_var = inp_vars[2] if len(inp_vars) > 2 else "nullptr"
             mask_var = inp_vars[3] if len(inp_vars) > 3 else "nullptr"
-            scale = node.attributes.get("scale", 1.0)
+            # Absent scale means the PyTorch default 1/sqrt(head_dim),
+            # computed from q at runtime since the dim may be symbolic.
+            if "scale" in node.attributes:
+                scale_expr = f"{node.attributes['scale']}f"
+            else:
+                scale_expr = f"(1.0f / sqrtf((float)q_{node.id}->ne[0]))"
             lines.append(
                 f"    struct ggml_tensor* q_{node.id} = {q_var}; if (!ggml_is_contiguous(q_{node.id})) q_{node.id} = ggml_cont(ctx, q_{node.id});"
             )
@@ -529,7 +552,7 @@ class GGMLCCppCodeGenerator:
                 f"    struct ggml_tensor* v_{node.id} = {v_var}; if (v_{node.id} && !ggml_is_contiguous(v_{node.id})) v_{node.id} = ggml_cont(ctx, v_{node.id});"
             )
             lines.append(
-                f"    tensors[{out_id}] = ggml_flash_attn_ext(ctx, q_{node.id}, k_{node.id}, v_{node.id}, {mask_var}, {scale}f, 0.0f, 0.0f);"
+                f"    tensors[{out_id}] = ggml_flash_attn_ext(ctx, q_{node.id}, k_{node.id}, v_{node.id}, {mask_var}, {scale_expr}, 0.0f, 0.0f);"
             )
         elif node.opcode == GGMLOpCode.GGML_OP_ROPE:
             n_dims = node.attributes.get("n_dims", 0)
@@ -559,28 +582,10 @@ class GGMLCCppCodeGenerator:
         elif node.opcode == GGMLOpCode.GGML_OP_CONCAT:
             dim = node.attributes.get("ggml_dim", node.attributes.get("dim", 0))
             lines.append(f"    struct ggml_tensor* cc_{node.id} = {inp_vars[0]};")
-            for i, inp_var in enumerate(inp_vars[1:]):
-                lines.append(f"    struct ggml_tensor* cn_{node.id}_{i} = {inp_var};")
+            for inp_var in inp_vars[1:]:
                 lines.append(
-                    f"    bool cc_empty_{node.id}_{i} = cc_{node.id}->ne[0] == 0 || cc_{node.id}->ne[1] == 0 || cc_{node.id}->ne[2] == 0 || cc_{node.id}->ne[3] == 0;"
+                    f"    cc_{node.id} = concat_pair(ctx, cc_{node.id}, {inp_var}, {dim});"
                 )
-                lines.append(
-                    f"    bool cn_empty_{node.id}_{i} = cn_{node.id}_{i}->ne[0] == 0 || cn_{node.id}_{i}->ne[1] == 0 || cn_{node.id}_{i}->ne[2] == 0 || cn_{node.id}_{i}->ne[3] == 0;"
-                )
-                lines.append(
-                    f"    if (cc_empty_{node.id}_{i}) {{ cc_{node.id} = cn_{node.id}_{i}; }}"
-                )
-                lines.append(f"    else if (!cn_empty_{node.id}_{i}) {{")
-                lines.append(
-                    f"        if (!ggml_is_contiguous(cc_{node.id})) cc_{node.id} = ggml_cont(ctx, cc_{node.id});"
-                )
-                lines.append(
-                    f"        if (!ggml_is_contiguous(cn_{node.id}_{i})) cn_{node.id}_{i} = ggml_cont(ctx, cn_{node.id}_{i});"
-                )
-                lines.append(
-                    f"        cc_{node.id} = ggml_concat(ctx, cc_{node.id}, cn_{node.id}_{i}, {dim});"
-                )
-                lines.append("    }")
             lines.append(
                 f"    if (cc_{node.id} && !ggml_is_contiguous(cc_{node.id})) cc_{node.id} = ggml_cont(ctx, cc_{node.id});"
             )
