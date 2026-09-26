@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <vector>
 #include <climits>
+#include <cfloat>
 #include "ggml.h"
 #include "ggml-impl.h"
 #include "ggml-backend.h"
@@ -2646,9 +2647,9 @@ void ModelExecutor::prepare(const std::unordered_map<std::string, int64_t>& symb
             }
             case GGML_OP_CLAMP: {
                 float min_val = op.float_attributes.count("min") ? static_cast<float>(op.float_attributes.at("min"))
-                              : op.attributes.count("min") ? static_cast<float>(op.attributes.at("min")) : 0.0f;
+                              : op.attributes.count("min") ? static_cast<float>(op.attributes.at("min")) : -FLT_MAX;
                 float max_val = op.float_attributes.count("max") ? static_cast<float>(op.float_attributes.at("max"))
-                              : op.attributes.count("max") ? static_cast<float>(op.attributes.at("max")) : 6.0f;
+                              : op.attributes.count("max") ? static_cast<float>(op.attributes.at("max")) : FLT_MAX;
                 result = ggml_clamp(ctx_, in0, min_val, max_val);
                 break;
             }

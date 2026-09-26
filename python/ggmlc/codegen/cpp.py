@@ -118,6 +118,15 @@ class GGMLCCppCodeGenerator:
             "        if (!ggml_is_contiguous(b)) b = ggml_cont(ctx, b);",
             "        b = ggml_repeat_4d(ctx, b, target_ne[0], target_ne[1], target_ne[2], target_ne[3]);",
             "    }",
+            "    if (a->type != b->type) {",
+            "        if (a->type == GGML_TYPE_I32 && b->type == GGML_TYPE_F32) {",
+            "            if (!ggml_is_contiguous(a)) a = ggml_cont(ctx, a);",
+            "            a = ggml_cast(ctx, a, GGML_TYPE_F32);",
+            "        } else if (b->type == GGML_TYPE_I32 && a->type == GGML_TYPE_F32) {",
+            "            if (!ggml_is_contiguous(b)) b = ggml_cont(ctx, b);",
+            "            b = ggml_cast(ctx, b, GGML_TYPE_F32);",
+            "        }",
+            "    }",
             "    return {a, b};",
             "}",
             "",
@@ -417,7 +426,7 @@ class GGMLCCppCodeGenerator:
             d0 = node.attributes.get("dilation_w", 1)
             d1 = node.attributes.get("dilation_h", 1)
             lines.append(
-                f"    tensors[{out_id}] = ggml_conv_2d_dw_direct(ctx, {inp_vars[0]}, {inp_vars[1]}, {s0}, {s1}, {p0}, {p1}, {d0}, {d1});"
+                f"    tensors[{out_id}] = ggml_conv_2d_dw(ctx, {inp_vars[0]}, {inp_vars[1]}, {s0}, {s1}, {p0}, {p1}, {d0}, {d1});"
             )
             if len(inp_vars) > 2:
                 lines.append(
@@ -546,17 +555,31 @@ class GGMLCCppCodeGenerator:
         elif node.opcode == GGMLOpCode.GGML_OP_CONCAT:
             dim = node.attributes.get("ggml_dim", node.attributes.get("dim", 0))
             lines.append(f"    struct ggml_tensor* cc_{node.id} = {inp_vars[0]};")
-            lines.append(
-                f"    if (!ggml_is_contiguous(cc_{node.id})) cc_{node.id} = ggml_cont(ctx, cc_{node.id});"
-            )
             for i, inp_var in enumerate(inp_vars[1:]):
                 lines.append(f"    struct ggml_tensor* cn_{node.id}_{i} = {inp_var};")
                 lines.append(
-                    f"    if (!ggml_is_contiguous(cn_{node.id}_{i})) cn_{node.id}_{i} = ggml_cont(ctx, cn_{node.id}_{i});"
+                    f"    bool cc_empty_{node.id}_{i} = cc_{node.id}->ne[0] == 0 || cc_{node.id}->ne[1] == 0 || cc_{node.id}->ne[2] == 0 || cc_{node.id}->ne[3] == 0;"
                 )
                 lines.append(
-                    f"    cc_{node.id} = ggml_concat(ctx, cc_{node.id}, cn_{node.id}_{i}, {dim});"
+                    f"    bool cn_empty_{node.id}_{i} = cn_{node.id}_{i}->ne[0] == 0 || cn_{node.id}_{i}->ne[1] == 0 || cn_{node.id}_{i}->ne[2] == 0 || cn_{node.id}_{i}->ne[3] == 0;"
                 )
+                lines.append(
+                    f"    if (cc_empty_{node.id}_{i}) {{ cc_{node.id} = cn_{node.id}_{i}; }}"
+                )
+                lines.append(f"    else if (!cn_empty_{node.id}_{i}) {{")
+                lines.append(
+                    f"        if (!ggml_is_contiguous(cc_{node.id})) cc_{node.id} = ggml_cont(ctx, cc_{node.id});"
+                )
+                lines.append(
+                    f"        if (!ggml_is_contiguous(cn_{node.id}_{i})) cn_{node.id}_{i} = ggml_cont(ctx, cn_{node.id}_{i});"
+                )
+                lines.append(
+                    f"        cc_{node.id} = ggml_concat(ctx, cc_{node.id}, cn_{node.id}_{i}, {dim});"
+                )
+                lines.append("    }")
+            lines.append(
+                f"    if (cc_{node.id} && !ggml_is_contiguous(cc_{node.id})) cc_{node.id} = ggml_cont(ctx, cc_{node.id});"
+            )
             lines.append(f"    tensors[{out_id}] = cc_{node.id};")
         elif node.opcode == GGMLOpCode.GGML_OP_CONT:
             lines.append(f"    tensors[{out_id}] = ggml_cont(ctx, {inp_vars[0]});")

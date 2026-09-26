@@ -379,3 +379,61 @@ def test_standalone_l2_normalize(ggml_standalone_libs, tmp_path):
     _run_standalone(
         L2Normalize().eval(), (img_embeds,), "tiny_l2_normalize", ggml_standalone_libs, tmp_path
     )
+
+
+def test_standalone_conv2d_bias(ggml_standalone_libs, tmp_path):
+    """CONV_2D with channel-vector bias through generated code matches torch."""
+    torch.manual_seed(0)
+
+    class ConvBias(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv = nn.Conv2d(3, 8, 3, padding=1)
+
+        def forward(self, x):
+            return self.conv(x)
+
+    x = torch.randn(1, 3, 16, 16)
+    _run_standalone(ConvBias().eval(), (x,), "tiny_conv2d_bias", ggml_standalone_libs, tmp_path)
+
+
+def test_standalone_concat_multi(ggml_standalone_libs, tmp_path):
+    """Multi-way CONCAT (beyond the first two inputs) matches torch."""
+    torch.manual_seed(0)
+
+    class ConcatFour(nn.Module):
+        def forward(self, a, b, c, d):
+            return torch.cat([a, b, c, d], dim=1)
+
+    args = tuple(torch.randn(1, 2, 8, 8) for _ in range(4))
+    _run_standalone(ConcatFour().eval(), args, "tiny_concat_multi", ggml_standalone_libs, tmp_path)
+
+
+def test_standalone_depthwise_conv2d(ggml_standalone_libs, tmp_path):
+    """True DEPTHWISE conv (direct kernel) through generated code matches torch."""
+    torch.manual_seed(0)
+
+    class Depthwise(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv = nn.Conv2d(8, 8, 3, padding=1, groups=8)
+
+        def forward(self, x):
+            return self.conv(x)
+
+    x = torch.randn(1, 8, 16, 16)
+    _run_standalone(
+        Depthwise().eval(), (x,), "tiny_depthwise_conv2d", ggml_standalone_libs, tmp_path
+    )
+
+
+def test_standalone_clamp_min_open(ggml_standalone_libs, tmp_path):
+    """Open-ended clamp_min (no max) must not invent a max bound."""
+    torch.manual_seed(0)
+
+    class ClampMin(nn.Module):
+        def forward(self, x):
+            return (x * 10.0).clamp_min(0.5)
+
+    x = torch.randn(4, 16)
+    _run_standalone(ClampMin().eval(), (x,), "tiny_clamp_min_open", ggml_standalone_libs, tmp_path)
