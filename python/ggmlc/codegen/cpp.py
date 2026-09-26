@@ -665,6 +665,46 @@ class GGMLCCppCodeGenerator:
             lines.append(
                 f"    tensors[{out_id}] = ggml_reshape_4d(ctx, sr_{node.id}, {', '.join(ne_strs)});"
             )
+        elif node.opcode == GGMLOpCode.GGML_OP_MEAN:
+            g_dim = node.attributes.get("ggml_dim", 0)
+            out_t = self.graph.tensors[out_id]
+            ne_strs = [_dim_to_cpp_expr(d) for d in out_t.ne]
+            if g_dim == 1:
+                lines.append(
+                    f"    struct ggml_tensor* mn_{node.id} = ggml_cont(ctx, ggml_transpose(ctx, {inp_vars[0]}));"
+                )
+                lines.append(f"    mn_{node.id} = ggml_mean(ctx, mn_{node.id});")
+                lines.append(
+                    f"    mn_{node.id} = ggml_cont(ctx, ggml_transpose(ctx, mn_{node.id}));"
+                )
+            elif g_dim >= 2:
+                lines.append(f"    struct ggml_tensor* mn_{node.id} = {inp_vars[0]};")
+                lines.append(
+                    f"    if (!ggml_is_contiguous(mn_{node.id})) mn_{node.id} = ggml_cont(ctx, mn_{node.id});"
+                )
+                lines.append(
+                    f"    mn_{node.id} = ggml_reshape_4d(ctx, mn_{node.id}, mn_{node.id}->ne[0], mn_{node.id}->ne[1] * mn_{node.id}->ne[2], 1, mn_{node.id}->ne[3]);"
+                )
+                lines.append(f"    mn_{node.id} = ggml_cont(ctx, mn_{node.id});")
+                lines.append(
+                    f"    mn_{node.id} = ggml_cont(ctx, ggml_transpose(ctx, mn_{node.id}));"
+                )
+                lines.append(f"    mn_{node.id} = ggml_mean(ctx, mn_{node.id});")
+                lines.append(
+                    f"    mn_{node.id} = ggml_cont(ctx, ggml_transpose(ctx, mn_{node.id}));"
+                )
+            else:
+                lines.append(f"    struct ggml_tensor* mn_{node.id} = {inp_vars[0]};")
+                lines.append(
+                    f"    if (!ggml_is_contiguous(mn_{node.id})) mn_{node.id} = ggml_cont(ctx, mn_{node.id});"
+                )
+                lines.append(f"    mn_{node.id} = ggml_mean(ctx, mn_{node.id});")
+            lines.append(
+                f"    if (!ggml_is_contiguous(mn_{node.id})) mn_{node.id} = ggml_cont(ctx, mn_{node.id});"
+            )
+            lines.append(
+                f"    tensors[{out_id}] = ggml_reshape_4d(ctx, mn_{node.id}, {', '.join(ne_strs)});"
+            )
         elif node.opcode == GGMLOpCode.GGML_OP_CPY:
             out_t = self.graph.tensors[out_id]
             ne_strs = [_dim_to_cpp_expr(d) for d in out_t.ne]
@@ -749,8 +789,11 @@ class GGMLCCppCodeGenerator:
             )
             lines.append("    #endif")
         else:
-            lines.append(f"    // Generic fallback for opcode {node.opcode.name}")
-            lines.append(f"    tensors[{out_id}] = {inp_vars[0]};")
+            raise NotImplementedError(
+                f"no C++ emission for {node.opcode.name} "
+                f"(node {node.id}, '{node.name}'); "
+                f"lower it to supported ops or add an emitter"
+            )
 
         return lines
 

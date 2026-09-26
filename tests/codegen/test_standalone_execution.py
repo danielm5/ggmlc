@@ -479,3 +479,27 @@ def test_standalone_sdpa_default_scale(ggml_standalone_libs, tmp_path):
     _run_standalone(
         TinyAttention().eval(), (q, k, v), "tiny_sdpa_default_scale", ggml_standalone_libs, tmp_path
     )
+
+
+def test_standalone_mean_last_dim(ggml_standalone_libs, tmp_path):
+    """MEAN over the last dim through generated code matches torch."""
+    torch.manual_seed(0)
+
+    class MeanLast(nn.Module):
+        def forward(self, x):
+            return x.mean(dim=-1)
+
+    x = torch.randn(4, 16)
+    _run_standalone(MeanLast().eval(), (x,), "tiny_mean_last_dim", ggml_standalone_libs, tmp_path)
+
+
+def test_standalone_mean_middle_dim(ggml_standalone_libs, tmp_path):
+    """MEAN over a middle dim (transpose reduction path) matches torch."""
+    torch.manual_seed(0)
+
+    class MeanMiddle(nn.Module):
+        def forward(self, x):
+            return x.mean(dim=2, keepdim=True)
+
+    x = torch.randn(1, 2, 4, 8)
+    _run_standalone(MeanMiddle().eval(), (x,), "tiny_mean_middle_dim", ggml_standalone_libs, tmp_path)
