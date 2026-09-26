@@ -587,11 +587,23 @@ class GGMLCCppCodeGenerator:
             )
         elif node.opcode == GGMLOpCode.GGML_OP_CONCAT:
             dim = node.attributes.get("ggml_dim", node.attributes.get("dim", 0))
-            lines.append(f"    struct ggml_tensor* cc_{node.id} = {inp_vars[0]};")
-            for inp_var in inp_vars[1:]:
+            if len(inp_vars) > 2:
+                parts = ", ".join(inp_vars)
+                lines.append(f"    struct ggml_tensor* cc_parts_{node.id}[] = {{{parts}}};")
+                lines.append(f"    struct ggml_tensor* cc_{node.id} = cc_parts_{node.id}[0];")
                 lines.append(
-                    f"    cc_{node.id} = concat_pair(ctx, cc_{node.id}, {inp_var}, {dim});"
+                    f"    for (int ci_{node.id} = 1; ci_{node.id} < {len(inp_vars)}; ++ci_{node.id}) {{"
                 )
+                lines.append(
+                    f"        cc_{node.id} = concat_pair(ctx, cc_{node.id}, cc_parts_{node.id}[ci_{node.id}], {dim});"
+                )
+                lines.append("    }")
+            else:
+                lines.append(f"    struct ggml_tensor* cc_{node.id} = {inp_vars[0]};")
+                if len(inp_vars) > 1:
+                    lines.append(
+                        f"    cc_{node.id} = concat_pair(ctx, cc_{node.id}, {inp_vars[1]}, {dim});"
+                    )
             lines.append(
                 f"    if (cc_{node.id} && !ggml_is_contiguous(cc_{node.id})) cc_{node.id} = ggml_cont(ctx, cc_{node.id});"
             )
